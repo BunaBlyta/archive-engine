@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16
+    container_name: archive-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: archive
+      POSTGRES_PASSWORD: archive_password
+      POSTGRES_DB: archive_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

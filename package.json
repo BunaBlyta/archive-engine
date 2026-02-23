@@ -1,0 +1,17 @@
+{
+  "name": "archive-engine",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "api",
+    "worker",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w api",
+    "dev:worker": "npm run dev -w worker",
+    "db:generate": "npm run db:generate -w @archive/db",
+    "db:migrate": "npm run db:migrate -w @archive/db",
+    "db:studio": "npm run db:studio -w @archive/db"
+  }
+}
