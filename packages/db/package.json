@@ -3,10 +3,10 @@
   "private": true,
   "version": "1.0.0",
   "main": "src/index.ts",
-  "scripts": {
-  "db:generate": "prisma generate",
-  "db:migrate": "prisma migrate dev",
-  "db:studio": "prisma studio"
+"scripts": {
+  "db:generate": "dotenv -e ../../.env -- prisma generate",
+  "db:migrate": "dotenv -e ../../.env -- prisma migrate dev",
+  "db:studio": "dotenv -e ../../.env -- prisma studio"
 },
   "dependencies": {
     "@prisma/client": "^6.19.2"

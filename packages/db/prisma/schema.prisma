@@ -1,7 +1,7 @@
 generator client {
   provider = "prisma-client-js"
+  output   = "../generated/client"
 }
-
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -12,4 +12,21 @@ model User {
   email     String   @unique
   password  String
   createdAt DateTime @default(now())
+}
+
+model Job {
+  id        String    @id @default(uuid())
+  type      String
+  payload   Json?
+  status    String    @default("queued") // queued | running | succeeded | failed
+  attempts  Int       @default(0)
+  runAt     DateTime  @default(now())
+  lockedAt  DateTime?
+  lockedBy  String?
+  lastError String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([status, runAt])
+  @@index([lockedAt])
 }

@@ -13,5 +13,8 @@
     "db:generate": "npm run db:generate -w @archive/db",
     "db:migrate": "npm run db:migrate -w @archive/db",
     "db:studio": "npm run db:studio -w @archive/db"
+  },
+  "devDependencies": {
+    "dotenv-cli": "^11.0.0"
   }
 }
