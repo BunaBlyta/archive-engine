@@ -3,4 +3,4 @@ node_modules
 dist
 .DS_Store
 data
-/generated/prisma
+packages/db/generated/

@@ -18,10 +18,6 @@ app.get("/health/db", async (_req, res) => {
   res.json({ ok: true, db: "up" });
 });
 
-app.listen(3000, () => {
-  console.log("Server running on port 3000");
-});
-
 app.post("/jobs/ping", async (_req, res) => {
   const job = await prisma.job.create({
     data: {
@@ -41,4 +37,8 @@ app.get("/jobs/latest", async (_req, res) => {
   });
 
   res.json({ ok: true, jobs });
+});
+
+app.listen(3000, () => {
+  console.log("Server running on port 3000");
 });

@@ -2,6 +2,7 @@ generator client {
   provider = "prisma-client-js"
   output   = "../generated/client"
 }
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -12,6 +13,10 @@ model User {
   email     String   @unique
   password  String
   createdAt DateTime @default(now())
+
+  memberships      Membership[]
+  documentsCreated Document[]        @relation("DocumentsCreated")
+  versionsCreated  DocumentVersion[] @relation("VersionsCreated")
 }
 
 model Job {
@@ -29,4 +34,76 @@ model Job {
 
   @@index([status, runAt])
   @@index([lockedAt])
+}
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  memberships      Membership[]
+  documents        Document[]
+  documentVersions DocumentVersion[]
+}
+
+model Membership {
+  tenantId  String
+  userId    String
+  role      String   @default("member")
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, userId])
+  @@index([userId])
+}
+
+model Document {
+  id          String   @id @default(cuid())
+  tenantId    String
+  title       String
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User?  @relation("DocumentsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+
+  versions DocumentVersion[]
+
+  @@index([tenantId, createdAt])
+}
+
+model DocumentVersion {
+  id         String @id @default(cuid())
+  tenantId   String
+  documentId String
+  version    Int
+  blobId     String
+
+  sha256    String
+  sizeBytes Int
+  mimeType  String
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  blob      Blob     @relation(fields: [blobId], references: [id], onDelete: Restrict)
+  createdBy User?    @relation("VersionsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([documentId, version])
+  @@index([tenantId, createdAt])
+  @@index([sha256])
+}
+
+model Blob {
+  id         String   @id @default(cuid())
+  sha256     String   @unique
+  sizeBytes  Int
+  storageKey String   @unique
+  createdAt  DateTime @default(now())
+
+  versions DocumentVersion[]
 }
