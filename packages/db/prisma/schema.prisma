@@ -9,7 +9,7 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(uuid())
+  id        String   @id @default(cuid())
   email     String   @unique
   password  String
   createdAt DateTime @default(now())
@@ -17,26 +17,29 @@ model User {
   memberships      Membership[]
   documentsCreated Document[]        @relation("DocumentsCreated")
   versionsCreated  DocumentVersion[] @relation("VersionsCreated")
+  auditLogs        AuditLog[]
 }
 
 model Job {
-  id        String    @id @default(uuid())
-  type      String
-  payload   Json?
-  status    String    @default("queued") // queued | running | succeeded | failed
-  attempts  Int       @default(0)
-  runAt     DateTime  @default(now())
-  lockedAt  DateTime?
-  lockedBy  String?
-  lastError String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id          String    @id @default(cuid())
+  type        String
+  payload     Json?
+  // valid values: queued | running | succeeded | failed | dead
+  status      String    @default("queued")
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  runAt       DateTime  @default(now())
+  lockedAt    DateTime?
+  lockedBy    String?
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([status, runAt])
   @@index([lockedAt])
 }
 
-model Tenant {
+model Workspace {
   id        String   @id @default(cuid())
   name      String
   createdAt DateTime @default(now())
@@ -44,57 +47,59 @@ model Tenant {
   memberships      Membership[]
   documents        Document[]
   documentVersions DocumentVersion[]
+  documentSearches DocumentSearch[]
+  auditLogs        AuditLog[]
 }
 
 model Membership {
-  tenantId  String
-  userId    String
-  role      String   @default("member")
-  createdAt DateTime @default(now())
+  workspaceId String
+  userId      String
+  role        String   @default("member")
+  createdAt   DateTime @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@id([tenantId, userId])
+  @@id([workspaceId, userId])
   @@index([userId])
 }
 
 model Document {
   id          String   @id @default(cuid())
-  tenantId    String
+  workspaceId String
   title       String
   createdById String?
   createdAt   DateTime @default(now())
 
-  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  createdBy User?  @relation("DocumentsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation("DocumentsCreated", fields: [createdById], references: [id], onDelete: SetNull)
 
   versions DocumentVersion[]
 
-  @@index([tenantId, createdAt])
+  @@index([workspaceId, createdAt])
 }
 
 model DocumentVersion {
-  id         String @id @default(cuid())
-  tenantId   String
-  documentId String
-  version    Int
-  blobId     String
-
-  sha256    String
-  sizeBytes Int
-  mimeType  String
-
+  id          String   @id @default(cuid())
+  workspaceId String
+  documentId  String
+  version     Int
+  blobId      String
+  sha256      String
+  sizeBytes   Int
+  mimeType    String
   createdById String?
   createdAt   DateTime @default(now())
 
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  blob      Blob     @relation(fields: [blobId], references: [id], onDelete: Restrict)
-  createdBy User?    @relation("VersionsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document  Document       @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  blob      Blob           @relation(fields: [blobId], references: [id], onDelete: Restrict)
+  createdBy User?          @relation("VersionsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  search    DocumentSearch?
 
   @@unique([documentId, version])
-  @@index([tenantId, createdAt])
+  @@index([documentId])
+  @@index([workspaceId, createdAt])
   @@index([sha256])
 }
 
@@ -106,4 +111,38 @@ model Blob {
   createdAt  DateTime @default(now())
 
   versions DocumentVersion[]
+}
+
+model DocumentSearch {
+  versionId   String   @id
+  workspaceId String
+  plainText   String?
+  indexedAt   DateTime @default(now())
+  status      String   @default("pending")
+  error       String?
+
+  version   DocumentVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  workspaceId String
+  actorId     String?
+  action      String
+  entityType  String
+  entityId    String
+  ip          String?
+  userAgent   String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId])
+  @@index([actorId])
 }

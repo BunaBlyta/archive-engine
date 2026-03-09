@@ -1,9 +1,7 @@
 import dotenv from "dotenv";
-import path from "path";
 
-dotenv.config({
-  path: path.resolve(__dirname, "../../.env"),
-});
+dotenv.config({ path: `${__dirname}/../../.env` });
+
 import express from "express";
 import { prisma } from "@archive/db";
 
@@ -14,16 +12,20 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/health/db", async (_req, res) => {
-  await prisma.$queryRaw`SELECT 1`;
-  res.json({ ok: true, db: "up" });
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ ok: true, db: "up" });
+  } catch {
+    res.status(500).json({ ok: false, db: "down" });
+  }
 });
 
 app.post("/jobs/ping", async (_req, res) => {
   const job = await prisma.job.create({
     data: {
       type: "PING",
-      payload: { message: "hello" }
-    }
+      payload: { message: "hello" },
+    },
   });
 
   res.json({ ok: true, jobId: job.id });
@@ -39,6 +41,16 @@ app.get("/jobs/latest", async (_req, res) => {
   res.json({ ok: true, jobs });
 });
 
-app.listen(3000, () => {
-  console.log("Server running on port 3000");
+const PORT = process.env.PORT ?? 3000;
+
+const server = app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
+process.on("SIGTERM", () => {
+  console.log("SIGTERM received, shutting down server...");
+  server.close(() => {
+    console.log("Server closed.");
+    process.exit(0);
+  });
 });

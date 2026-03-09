@@ -4,22 +4,23 @@
   "main": "index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
- "dependencies": {
-  "@archive/db": "*",
-  "dotenv": "^17.3.1",
-  "express": "^5.2.1"
-},
+  "dependencies": {
+    "@archive/db": "*",
+    "dotenv": "^16.4.5",
+    "express": "^5.2.1"
+  },
   "devDependencies": {
+    "@archive/storage": "*",
     "@types/express": "^5.0.6",
     "@types/node": "^25.3.0",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.9.3",
-    "@archive/storage": "*"
+    "typescript": "^5.9.3"
   }
 }
