@@ -17,6 +17,7 @@ model User {
   memberships      Membership[]
   documentsCreated Document[]        @relation("DocumentsCreated")
   versionsCreated  DocumentVersion[] @relation("VersionsCreated")
+  sessions Session[]
   auditLogs        AuditLog[]
 }
 
@@ -145,4 +146,20 @@ model AuditLog {
   @@index([workspaceId, createdAt])
   @@index([workspaceId])
   @@index([actorId])
+}
+
+model Session {
+  id                  String    @id @default(cuid())
+  userId              String
+  refreshTokenHash    String    @unique
+  rotatedFromId       String?
+  expiresAt           DateTime
+  revokedAt           DateTime?
+  createdAt           DateTime  @default(now())
+  ip                  String?
+  userAgent           String?
+
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
