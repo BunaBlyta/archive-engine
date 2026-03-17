@@ -183,7 +183,10 @@ router.post("/refresh", async (req, res) => {
   // Rotation: delete old session, create new one
   const newRefreshToken = generateRefreshToken();
 
-  await prisma.session.delete({ where: { id: session.id } });
+ await prisma.session.update({
+    where: { id: session.id },
+    data: { revokedAt: new Date() },
+  });
 
   await prisma.session.create({
     data: {

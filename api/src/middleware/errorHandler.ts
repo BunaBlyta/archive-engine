@@ -1,4 +1,7 @@
 import { Request, Response, NextFunction } from "express";
+import pino from "pino";
+
+const logger = pino();
 
 export class AppError extends Error {
   constructor(
@@ -59,7 +62,7 @@ export function errorHandler(
     return;
   }
 
-  console.error("Unhandled error", err);
+logger.error({ err, requestId: req.id }, "Unhandled error");
 
   res.status(500).json({
     ok: false,
