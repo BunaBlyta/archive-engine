@@ -6,6 +6,7 @@ import healthRouter from "./routes/health";
 import jobsRouter from "./routes/jobs";
 import cookieParser from "cookie-parser";
 import authRouter from "./routes/auth";
+import workspacesRouter from "./routes/workspaces";
 
 export function createApp() {
   const app = express();
@@ -19,8 +20,8 @@ export function createApp() {
 
   app.use("/health", healthRouter);
   app.use("/jobs", jobsRouter);
-
   app.use("/v1/auth", authRouter);
+  app.use("/v1/workspaces", workspacesRouter);
   app.use(errorHandler);
 
   return app;
