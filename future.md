@@ -37,3 +37,7 @@ Documents and versions are hard-deleted. Soft deletes (a `deletedAt` timestamp) 
 
 **Test coverage**
 Testing was deferred to prioritize building the core system. Planned: integration tests for auth flow, upload pipeline, workspace isolation, and search. Tooling: Vitest + supertest.
+
+**Token reuse**
+Refresh token reuse detection could be strengthened with more granular session chain tracing
+Rate limiting on auth endpoints (tracked in FUTURE.md)
