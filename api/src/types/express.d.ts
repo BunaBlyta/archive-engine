@@ -5,5 +5,10 @@ declare namespace Express {
       id: string;
       email: string;
     };
+    membership?: {
+      workspaceId: string;
+      userId: string;
+      role: string;
+    };
   }
 }

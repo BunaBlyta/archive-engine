@@ -4,3 +4,6 @@ dist
 .DS_Store
 data
 packages/db/generated/
+buildLog.md
+future.md
+future.md
