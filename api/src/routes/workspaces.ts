@@ -2,7 +2,13 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "@archive/db";
 import { requireAuth } from "../middleware/requireAuth";
-import { ValidationError } from "../middleware/errorHandler";
+import {
+  ValidationError,
+  NotFoundError,
+  ConflictError,
+  ForbiddenError,
+} from "../middleware/errorHandler";
+import { requireMembership } from "../middleware/requireMembership";
 
 const router = Router();
 
@@ -74,6 +80,69 @@ router.get("/", async (req, res) => {
   res.json({
     ok: true,
     data: { workspaces },
+  });
+});
+
+// --- Add member ---
+
+const addMemberSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  role: z.enum(["member", "admin"]).default("member"),
+});
+
+router.post("/:workspaceId/members", requireMembership, async (req, res) => {
+  if (req.membership!.role !== "admin") {
+    throw new ForbiddenError("Only admins can add members");
+  }
+
+  const parsed = addMemberSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    throw new ValidationError(parsed.error.issues[0].message);
+  }
+
+  const { email, role } = parsed.data;
+
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, email: true },
+  });
+
+  if (!user) {
+    throw new NotFoundError("No user found with that email");
+  }
+
+  const existing = await prisma.membership.findUnique({
+    where: {
+      workspaceId_userId: {
+        workspaceId: req.membership!.workspaceId,
+        userId: user.id,
+      },
+    },
+  });
+
+  if (existing) {
+    throw new ConflictError("User is already a member of this workspace");
+  }
+
+  const membership = await prisma.membership.create({
+    data: {
+      workspaceId: req.membership!.workspaceId,
+      userId: user.id,
+      role,
+    },
+  });
+
+  res.status(201).json({
+    ok: true,
+    data: {
+      member: {
+        userId: membership.userId,
+        email: user.email,
+        role: membership.role,
+        createdAt: membership.createdAt.toISOString(),
+      },
+    },
   });
 });
 
