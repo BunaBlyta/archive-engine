@@ -1,10 +1,10 @@
-import { Router, RequestHandler } from "express";
+import { Request, Router, RequestHandler } from "express";
 import multer from "multer";
 import { Readable } from "stream";
 import { createHash } from "crypto";
 import { prisma } from "@archive/db";
-import { blobExists, putBlob } from "@archive/storage";
-import { ValidationError } from "../middleware/errorHandler";
+import { blobExists, getBlob, putBlob } from "@archive/storage";
+import { NotFoundError, ValidationError } from "../middleware/errorHandler";
 
 const router = Router({ mergeParams: true });
 
@@ -43,6 +43,108 @@ function getStringField(value: unknown): string | undefined {
   return undefined;
 }
 
+async function ingestUploadedFile(file: Express.Multer.File) {
+  const sha256 = createHash("sha256").update(file.buffer).digest("hex");
+  const sizeBytes = file.size;
+  const mimeType = file.mimetype || "application/octet-stream";
+
+  if (!(await blobExists(sha256))) {
+    await putBlob(sha256, Readable.from(file.buffer), sizeBytes, mimeType);
+  }
+
+  return { sha256, sizeBytes, mimeType };
+}
+
+function requireUploadedFile(req: Request) {
+  if (!req.file) {
+    throw new ValidationError("Document file is required");
+  }
+
+  return req.file;
+}
+
+function getRouteParam(req: Request, name: string) {
+  const value = req.params[name];
+
+  if (typeof value !== "string" || value.length === 0) {
+    throw new ValidationError(`Missing route parameter: ${name}`);
+  }
+
+  return value;
+}
+
+function formatVersion(version: {
+  id: string;
+  version: number;
+  sha256: string;
+  sizeBytes: number;
+  mimeType: string;
+  createdAt: Date;
+}) {
+  return {
+    id: version.id,
+    version: version.version,
+    sha256: version.sha256,
+    sizeBytes: version.sizeBytes,
+    mimeType: version.mimeType,
+    createdAt: version.createdAt.toISOString(),
+  };
+}
+
+function safeDownloadFilename(title: string, version: number) {
+  const safeTitle = title
+    .trim()
+    .replace(/[/\\?%*:|"<>]/g, "-")
+    .replace(/\s+/g, " ")
+    .slice(0, 120);
+
+  return `${safeTitle || "document"}-v${version}`;
+}
+
+function parseVersionParam(value: string) {
+  const version = Number(value);
+
+  if (!Number.isInteger(version) || version < 1) {
+    throw new ValidationError("Version must be a positive integer");
+  }
+
+  return version;
+}
+
+// --- List documents ---
+
+router.get("/", async (req, res) => {
+  const documents = await prisma.document.findMany({
+    where: {
+      workspaceId: req.membership!.workspaceId,
+    },
+    include: {
+      versions: {
+        orderBy: { version: "desc" },
+        take: 1,
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  res.json({
+    ok: true,
+    data: {
+      documents: documents.map((document) => ({
+        id: document.id,
+        workspaceId: document.workspaceId,
+        title: document.title,
+        createdAt: document.createdAt.toISOString(),
+        latestVersion: document.versions[0]
+          ? formatVersion(document.versions[0])
+          : null,
+      })),
+    },
+  });
+});
+
+// --- Create document ---
+
 router.post("/", uploadSingleFile, async (req, res) => {
   const title = getStringField(req.body.title)?.trim();
 
@@ -50,17 +152,8 @@ router.post("/", uploadSingleFile, async (req, res) => {
     throw new ValidationError("Document title is required");
   }
 
-  if (!req.file) {
-    throw new ValidationError("Document file is required");
-  }
-
-  const sha256 = createHash("sha256").update(req.file.buffer).digest("hex");
-  const sizeBytes = req.file.size;
-  const mimeType = req.file.mimetype || "application/octet-stream";
-
-  if (!(await blobExists(sha256))) {
-    await putBlob(sha256, Readable.from(req.file.buffer), sizeBytes, mimeType);
-  }
+  const file = requireUploadedFile(req);
+  const { sha256, sizeBytes, mimeType } = await ingestUploadedFile(file);
 
   const result = await prisma.$transaction(async (tx) => {
     const blob = await tx.blob.upsert({
@@ -106,16 +199,152 @@ router.post("/", uploadSingleFile, async (req, res) => {
         title: result.document.title,
         createdAt: result.document.createdAt.toISOString(),
       },
-      version: {
-        id: result.version.id,
-        version: result.version.version,
-        sha256: result.version.sha256,
-        sizeBytes: result.version.sizeBytes,
-        mimeType: result.version.mimeType,
-        createdAt: result.version.createdAt.toISOString(),
+      version: formatVersion(result.version),
+    },
+  });
+});
+
+// --- Get document detail ---
+
+router.get("/:documentId", async (req, res) => {
+  const documentId = getRouteParam(req, "documentId");
+
+  const document = await prisma.document.findFirst({
+    where: {
+      id: documentId,
+      workspaceId: req.membership!.workspaceId,
+    },
+    include: {
+      versions: {
+        orderBy: { version: "asc" },
       },
     },
   });
+
+  if (!document) {
+    throw new NotFoundError("Document not found");
+  }
+
+  res.json({
+    ok: true,
+    data: {
+      document: {
+        id: document.id,
+        workspaceId: document.workspaceId,
+        title: document.title,
+        createdAt: document.createdAt.toISOString(),
+        versions: document.versions.map(formatVersion),
+      },
+    },
+  });
+});
+
+// --- Create document version ---
+
+router.post("/:documentId/versions", uploadSingleFile, async (req, res) => {
+  const documentId = getRouteParam(req, "documentId");
+  const file = requireUploadedFile(req);
+  const { sha256, sizeBytes, mimeType } = await ingestUploadedFile(file);
+
+  const result = await prisma.$transaction(async (tx) => {
+    const document = await tx.document.findFirst({
+      where: {
+        id: documentId,
+        workspaceId: req.membership!.workspaceId,
+      },
+      select: { id: true, workspaceId: true, title: true, createdAt: true },
+    });
+
+    if (!document) {
+      throw new NotFoundError("Document not found");
+    }
+
+    const latestVersion = await tx.documentVersion.aggregate({
+      where: {
+        documentId: document.id,
+        workspaceId: req.membership!.workspaceId,
+      },
+      _max: { version: true },
+    });
+
+    const nextVersion = (latestVersion._max.version ?? 0) + 1;
+
+    const blob = await tx.blob.upsert({
+      where: { sha256 },
+      update: {},
+      create: {
+        sha256,
+        sizeBytes,
+        storageKey: sha256,
+      },
+    });
+
+    const version = await tx.documentVersion.create({
+      data: {
+        workspaceId: req.membership!.workspaceId,
+        documentId: document.id,
+        version: nextVersion,
+        blobId: blob.id,
+        sha256,
+        sizeBytes,
+        mimeType,
+        createdById: req.user!.id,
+      },
+    });
+
+    return { document, version };
+  });
+
+  res.status(201).json({
+    ok: true,
+    data: {
+      document: {
+        id: result.document.id,
+        workspaceId: result.document.workspaceId,
+        title: result.document.title,
+        createdAt: result.document.createdAt.toISOString(),
+      },
+      version: formatVersion(result.version),
+    },
+  });
+});
+
+// --- Download document version ---
+
+router.get("/:documentId/versions/:version/download", async (req, res) => {
+  const documentId = getRouteParam(req, "documentId");
+  const requestedVersion = parseVersionParam(getRouteParam(req, "version"));
+
+  const version = await prisma.documentVersion.findFirst({
+    where: {
+      documentId,
+      workspaceId: req.membership!.workspaceId,
+      version: requestedVersion,
+    },
+    include: {
+      document: {
+        select: { title: true },
+      },
+    },
+  });
+
+  if (!version) {
+    throw new NotFoundError("Document version not found");
+  }
+
+  const stream = await getBlob(version.sha256);
+  const filename = safeDownloadFilename(version.document.title, version.version);
+
+  res.setHeader("Content-Type", version.mimeType);
+  res.setHeader("Content-Length", version.sizeBytes.toString());
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+  stream.on("error", (err) => {
+    req.log?.error({ err, versionId: version.id }, "Blob download stream failed");
+    res.destroy(err);
+  });
+
+  stream.pipe(res);
 });
 
 export default router;
