@@ -123,6 +123,23 @@ function parseVersionParam(value: string) {
   return version;
 }
 
+function createSearchSnippet(plainText: string | null, query: string) {
+  if (!plainText) return null;
+
+  const normalizedText = plainText.replace(/\s+/g, " ").trim();
+  const index = normalizedText.toLowerCase().indexOf(query.toLowerCase());
+
+  if (index === -1) return null;
+
+  const contextChars = 80;
+  const start = Math.max(0, index - contextChars);
+  const end = Math.min(normalizedText.length, index + query.length + contextChars);
+  const prefix = start > 0 ? "..." : "";
+  const suffix = end < normalizedText.length ? "..." : "";
+
+  return `${prefix}${normalizedText.slice(start, end)}${suffix}`;
+}
+
 function auditRequestMetadata(req: Request) {
   return {
     ip: req.ip,
@@ -327,6 +344,7 @@ router.get("/search", async (req, res) => {
         search: {
           status: match.status,
           indexedAt: match.indexedAt.toISOString(),
+          snippet: createSearchSnippet(match.plainText, query),
         },
       })),
     },
