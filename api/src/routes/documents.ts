@@ -43,6 +43,23 @@ function getStringField(value: unknown): string | undefined {
   return undefined;
 }
 
+function parsePagination(req: Request) {
+  const rawLimit = getStringField(req.query.limit);
+  const rawOffset = getStringField(req.query.offset);
+  const limit = rawLimit === undefined ? 25 : Number(rawLimit);
+  const offset = rawOffset === undefined ? 0 : Number(rawOffset);
+
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new ValidationError("Limit must be an integer between 1 and 100");
+  }
+
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new ValidationError("Offset must be a non-negative integer");
+  }
+
+  return { limit, offset };
+}
+
 async function ingestUploadedFile(file: Express.Multer.File) {
   const sha256 = createHash("sha256").update(file.buffer).digest("hex");
   const sizeBytes = file.size;
@@ -79,6 +96,7 @@ function formatVersion(version: {
   sha256: string;
   sizeBytes: number;
   mimeType: string;
+  originalFilename: string | null;
   createdAt: Date;
   search?: {
     status: string;
@@ -92,6 +110,7 @@ function formatVersion(version: {
     sha256: version.sha256,
     sizeBytes: version.sizeBytes,
     mimeType: version.mimeType,
+    originalFilename: version.originalFilename,
     createdAt: version.createdAt.toISOString(),
     search: version.search
       ? {
@@ -103,14 +122,15 @@ function formatVersion(version: {
   };
 }
 
-function safeDownloadFilename(title: string, version: number) {
-  const safeTitle = title
+function safeDownloadFilename(filename: string | null, title: string, version: number) {
+  const name = filename ?? `${title}-v${version}`;
+  const safeName = name
     .trim()
     .replace(/[/\\?%*:|"<>]/g, "-")
     .replace(/\s+/g, " ")
     .slice(0, 120);
 
-  return `${safeTitle || "document"}-v${version}`;
+  return safeName || `document-v${version}`;
 }
 
 function parseVersionParam(value: string) {
@@ -179,6 +199,8 @@ async function createSearchIndexJob(
 // --- List documents ---
 
 router.get("/", async (req, res) => {
+  const { limit, offset } = parsePagination(req);
+
   const documents = await prisma.document.findMany({
     where: {
       workspaceId: req.membership!.workspaceId,
@@ -199,11 +221,18 @@ router.get("/", async (req, res) => {
       },
     },
     orderBy: { createdAt: "desc" },
+    take: limit,
+    skip: offset,
   });
 
   res.json({
     ok: true,
     data: {
+      pagination: {
+        limit,
+        offset,
+        nextOffset: documents.length === limit ? offset + limit : null,
+      },
       documents: documents.map((document) => ({
         id: document.id,
         workspaceId: document.workspaceId,
@@ -258,6 +287,7 @@ router.post("/", uploadSingleFile, async (req, res) => {
         sha256,
         sizeBytes,
         mimeType,
+        originalFilename: file.originalname,
         createdById: req.user!.id,
       },
     });
@@ -280,6 +310,7 @@ router.post("/", uploadSingleFile, async (req, res) => {
           sha256,
           sizeBytes,
           mimeType,
+          originalFilename: version.originalFilename,
         },
       },
     });
@@ -305,6 +336,7 @@ router.post("/", uploadSingleFile, async (req, res) => {
 
 router.get("/search", async (req, res) => {
   const query = getStringField(req.query.q)?.trim();
+  const { limit, offset } = parsePagination(req);
 
   if (!query) {
     throw new ValidationError("Search query is required");
@@ -334,12 +366,18 @@ router.get("/search", async (req, res) => {
       },
     },
     orderBy: { indexedAt: "desc" },
-    take: 25,
+    take: limit,
+    skip: offset,
   });
 
   res.json({
     ok: true,
     data: {
+      pagination: {
+        limit,
+        offset,
+        nextOffset: matches.length === limit ? offset + limit : null,
+      },
       results: matches.map((match) => ({
         document: {
           id: match.version.document.id,
@@ -452,6 +490,7 @@ router.post("/:documentId/versions", uploadSingleFile, async (req, res) => {
         sha256,
         sizeBytes,
         mimeType,
+        originalFilename: file.originalname,
         createdById: req.user!.id,
       },
     });
@@ -474,6 +513,7 @@ router.post("/:documentId/versions", uploadSingleFile, async (req, res) => {
           sha256,
           sizeBytes,
           mimeType,
+          originalFilename: version.originalFilename,
         },
       },
     });
@@ -535,12 +575,17 @@ router.get("/:documentId/versions/:version/download", async (req, res) => {
         sha256: version.sha256,
         sizeBytes: version.sizeBytes,
         mimeType: version.mimeType,
+        originalFilename: version.originalFilename,
       },
     },
   });
 
   const stream = await getBlob(version.sha256);
-  const filename = safeDownloadFilename(version.document.title, version.version);
+  const filename = safeDownloadFilename(
+    version.originalFilename,
+    version.document.title,
+    version.version
+  );
 
   res.setHeader("Content-Type", version.mimeType);
   res.setHeader("Content-Length", version.sizeBytes.toString());

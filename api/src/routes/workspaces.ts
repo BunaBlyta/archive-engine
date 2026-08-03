@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Request, Router } from "express";
 import { z } from "zod";
 import { prisma } from "@archive/db";
 import { requireAuth } from "../middleware/requireAuth";
@@ -14,6 +14,23 @@ import documentsRouter from "./documents";
 const router = Router();
 
 router.use(requireAuth);
+
+function parsePagination(req: Request) {
+  const rawLimit = typeof req.query.limit === "string" ? req.query.limit : undefined;
+  const rawOffset = typeof req.query.offset === "string" ? req.query.offset : undefined;
+  const limit = rawLimit === undefined ? 25 : Number(rawLimit);
+  const offset = rawOffset === undefined ? 0 : Number(rawOffset);
+
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new ValidationError("Limit must be an integer between 1 and 100");
+  }
+
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new ValidationError("Offset must be a non-negative integer");
+  }
+
+  return { limit, offset };
+}
 
 // --- Create workspace ---
 
@@ -81,6 +98,60 @@ router.get("/", async (req, res) => {
   res.json({
     ok: true,
     data: { workspaces },
+  });
+});
+
+// --- List audit logs ---
+
+router.get("/:workspaceId/audit-logs", requireMembership, async (req, res) => {
+  const { limit, offset } = parsePagination(req);
+
+  const logs = await prisma.auditLog.findMany({
+    where: {
+      workspaceId: req.membership!.workspaceId,
+    },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    skip: offset,
+    select: {
+      id: true,
+      action: true,
+      entityType: true,
+      entityId: true,
+      actorId: true,
+      ip: true,
+      userAgent: true,
+      metadata: true,
+      createdAt: true,
+      actor: {
+        select: {
+          email: true,
+        },
+      },
+    },
+  });
+
+  res.json({
+    ok: true,
+    data: {
+      pagination: {
+        limit,
+        offset,
+        nextOffset: logs.length === limit ? offset + limit : null,
+      },
+      auditLogs: logs.map((log) => ({
+        id: log.id,
+        action: log.action,
+        entityType: log.entityType,
+        entityId: log.entityId,
+        actorId: log.actorId,
+        actorEmail: log.actor?.email ?? null,
+        ip: log.ip,
+        userAgent: log.userAgent,
+        metadata: log.metadata,
+        createdAt: log.createdAt.toISOString(),
+      })),
+    },
   });
 });
 

@@ -89,6 +89,7 @@ model DocumentVersion {
   sha256      String
   sizeBytes   Int
   mimeType    String
+  originalFilename String?
   createdById String?
   createdAt   DateTime @default(now())
 

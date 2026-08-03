@@ -199,6 +199,7 @@ describe("API integration", () => {
         version: 1,
         sizeBytes: v1.length,
         mimeType: "text/plain",
+        originalFilename: "integration-v1.txt",
       })
     );
 
@@ -219,6 +220,7 @@ describe("API integration", () => {
         version: 2,
         sizeBytes: v2.length,
         mimeType: "text/plain",
+        originalFilename: "integration-v2.txt",
       })
     );
 
@@ -228,6 +230,25 @@ describe("API integration", () => {
       .expect(200);
 
     expect(detailResponse.body.data.document.versions).toHaveLength(2);
+    expect(detailResponse.body.data.document.versions[1]).toEqual(
+      expect.objectContaining({
+        originalFilename: "integration-v2.txt",
+      })
+    );
+
+    const listResponse = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents`)
+      .query({ limit: 1, offset: 0 })
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(listResponse.body.data.pagination).toEqual(
+      expect.objectContaining({
+        limit: 1,
+        offset: 0,
+      })
+    );
+    expect(listResponse.body.data.documents).toHaveLength(1);
 
     const downloadResponse = await request(app)
       .get(`/v1/workspaces/${workspaceId}/documents/${documentId}/versions/2/download`)
@@ -236,6 +257,9 @@ describe("API integration", () => {
 
     expect(downloadResponse.text).toBe(v2.toString("utf8"));
     expect(downloadResponse.headers["content-type"]).toContain("text/plain");
+    expect(downloadResponse.headers["content-disposition"]).toContain(
+      "integration-v2.txt"
+    );
 
     const auditLogs = await prisma.auditLog.findMany({
       where: {
@@ -256,6 +280,27 @@ describe("API integration", () => {
         "document.created",
         "document_version.created",
         "document_version.downloaded",
+      ])
+    );
+
+    const auditResponse = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/audit-logs`)
+      .query({ limit: 10, offset: 0 })
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(auditResponse.body.data.pagination).toEqual(
+      expect.objectContaining({
+        limit: 10,
+        offset: 0,
+      })
+    );
+    expect(auditResponse.body.data.auditLogs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "document_version.downloaded",
+          actorEmail: `${runId}-docs-owner@example.com`,
+        }),
       ])
     );
   });
@@ -289,9 +334,16 @@ describe("API integration", () => {
 
     const searchResponse = await request(app)
       .get(`/v1/workspaces/${workspaceId}/documents/search`)
-      .query({ q: "banana" })
+      .query({ q: "banana", limit: 5, offset: 0 })
       .set("Authorization", `Bearer ${owner.accessToken}`)
       .expect(200);
+
+    expect(searchResponse.body.data.pagination).toEqual(
+      expect.objectContaining({
+        limit: 5,
+        offset: 0,
+      })
+    );
 
     expect(searchResponse.body.data.results).toEqual(
       expect.arrayContaining([
@@ -301,6 +353,7 @@ describe("API integration", () => {
           }),
           version: expect.objectContaining({
             id: versionId,
+            originalFilename: "searchable.txt",
             search: expect.objectContaining({
               status: "indexed",
               error: null,
