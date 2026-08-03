@@ -323,6 +323,13 @@ router.get("/search", async (req, res) => {
       version: {
         include: {
           document: true,
+          search: {
+            select: {
+              status: true,
+              indexedAt: true,
+              error: true,
+            },
+          },
         },
       },
     },

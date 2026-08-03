@@ -4,6 +4,7 @@ dotenv.config({ path: `${__dirname}/../../.env` });
 
 import { prisma } from "@archive/db";
 import { getBlob } from "@archive/storage";
+import { PDFParse } from "pdf-parse";
 import { Readable } from "stream";
 
 const WORKER_ID = `worker-${process.pid}`;
@@ -133,14 +134,18 @@ function parseIndexDocumentVersionPayload(payload: unknown): IndexDocumentVersio
   throw new Error("Invalid INDEX_DOCUMENT_VERSION payload");
 }
 
-async function streamToString(stream: Readable): Promise<string> {
+async function streamToBuffer(stream: Readable): Promise<Buffer> {
   const chunks: Buffer[] = [];
 
   for await (const chunk of stream) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
-  return Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
+}
+
+async function streamToString(stream: Readable): Promise<string> {
+  return (await streamToBuffer(stream)).toString("utf8");
 }
 
 function isTextMimeType(mimeType: string) {
@@ -149,6 +154,95 @@ function isTextMimeType(mimeType: string) {
     mimeType === "application/json" ||
     mimeType.endsWith("+json")
   );
+}
+
+function isPdfMimeType(mimeType: string) {
+  return mimeType === "application/pdf";
+}
+
+async function extractPdfText(buffer: Buffer): Promise<string> {
+  const parser = new PDFParse({ data: buffer });
+
+  try {
+    const result = await parser.getText();
+    return result.text;
+  } finally {
+    await parser.destroy();
+  }
+}
+
+async function extractPlainText(version: { sha256: string; mimeType: string }) {
+  const stream = await getBlob(version.sha256);
+
+  if (isTextMimeType(version.mimeType)) {
+    return streamToString(stream);
+  }
+
+  if (isPdfMimeType(version.mimeType)) {
+    return extractPdfText(await streamToBuffer(stream));
+  }
+
+  return null;
+}
+
+async function markSearchUnsupported(version: { id: string; workspaceId: string; mimeType: string }) {
+  await prisma.documentSearch.upsert({
+    where: { versionId: version.id },
+    update: {
+      status: "unsupported",
+      plainText: null,
+      error: `Unsupported mime type: ${version.mimeType}`,
+    },
+    create: {
+      versionId: version.id,
+      workspaceId: version.workspaceId,
+      status: "unsupported",
+      plainText: null,
+      error: `Unsupported mime type: ${version.mimeType}`,
+    },
+  });
+}
+
+async function markSearchFailed(
+  version: { id: string; workspaceId: string },
+  message: string
+) {
+  await prisma.documentSearch.upsert({
+    where: { versionId: version.id },
+    update: {
+      status: "failed",
+      plainText: null,
+      error: message,
+    },
+    create: {
+      versionId: version.id,
+      workspaceId: version.workspaceId,
+      status: "failed",
+      plainText: null,
+      error: message,
+    },
+  });
+}
+
+async function markSearchIndexed(
+  version: { id: string; workspaceId: string },
+  plainText: string
+) {
+  await prisma.documentSearch.upsert({
+    where: { versionId: version.id },
+    update: {
+      status: "indexed",
+      plainText,
+      error: null,
+    },
+    create: {
+      versionId: version.id,
+      workspaceId: version.workspaceId,
+      status: "indexed",
+      plainText,
+      error: null,
+    },
+  });
 }
 
 async function indexDocumentVersion(payload: unknown) {
@@ -174,43 +268,23 @@ async function indexDocumentVersion(payload: unknown) {
     throw new Error(`Document version not found: ${versionId}`);
   }
 
-  if (!isTextMimeType(version.mimeType)) {
-    await prisma.documentSearch.upsert({
-      where: { versionId: version.id },
-      update: {
-        status: "unsupported",
-        plainText: null,
-        error: `Unsupported mime type: ${version.mimeType}`,
-      },
-      create: {
-        versionId: version.id,
-        workspaceId: version.workspaceId,
-        status: "unsupported",
-        plainText: null,
-        error: `Unsupported mime type: ${version.mimeType}`,
-      },
-    });
+  if (!isTextMimeType(version.mimeType) && !isPdfMimeType(version.mimeType)) {
+    await markSearchUnsupported(version);
     return;
   }
 
-  const stream = await getBlob(version.sha256);
-  const plainText = await streamToString(stream);
+  try {
+    const plainText = await extractPlainText(version);
 
-  await prisma.documentSearch.upsert({
-    where: { versionId: version.id },
-    update: {
-      status: "indexed",
-      plainText,
-      error: null,
-    },
-    create: {
-      versionId: version.id,
-      workspaceId: version.workspaceId,
-      status: "indexed",
-      plainText,
-      error: null,
-    },
-  });
+    if (plainText === null) {
+      await markSearchUnsupported(version);
+      return;
+    }
+
+    await markSearchIndexed(version, plainText);
+  } catch (e: unknown) {
+    await markSearchFailed(version, toErrorMessage(e));
+  }
 }
 
 function toErrorMessage(e: unknown): string {
