@@ -80,6 +80,11 @@ function formatVersion(version: {
   sizeBytes: number;
   mimeType: string;
   createdAt: Date;
+  search?: {
+    status: string;
+    indexedAt: Date;
+    error: string | null;
+  } | null;
 }) {
   return {
     id: version.id,
@@ -88,6 +93,13 @@ function formatVersion(version: {
     sizeBytes: version.sizeBytes,
     mimeType: version.mimeType,
     createdAt: version.createdAt.toISOString(),
+    search: version.search
+      ? {
+          status: version.search.status,
+          indexedAt: version.search.indexedAt.toISOString(),
+          error: version.search.error,
+        }
+      : null,
   };
 }
 
@@ -158,6 +170,15 @@ router.get("/", async (req, res) => {
       versions: {
         orderBy: { version: "desc" },
         take: 1,
+        include: {
+          search: {
+            select: {
+              status: true,
+              indexedAt: true,
+              error: true,
+            },
+          },
+        },
       },
     },
     orderBy: { createdAt: "desc" },
@@ -325,6 +346,15 @@ router.get("/:documentId", async (req, res) => {
     include: {
       versions: {
         orderBy: { version: "asc" },
+        include: {
+          search: {
+            select: {
+              status: true,
+              indexedAt: true,
+              error: true,
+            },
+          },
+        },
       },
     },
   });
