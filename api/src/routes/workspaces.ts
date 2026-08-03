@@ -9,6 +9,7 @@ import {
   ForbiddenError,
 } from "../middleware/errorHandler";
 import { requireMembership } from "../middleware/requireMembership";
+import documentsRouter from "./documents";
 
 const router = Router();
 
@@ -82,6 +83,8 @@ router.get("/", async (req, res) => {
     data: { workspaces },
   });
 });
+
+router.use("/:workspaceId/documents", requireMembership, documentsRouter);
 
 // --- Add member ---
 

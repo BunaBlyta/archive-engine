@@ -13,17 +13,19 @@
   "description": "",
   "dependencies": {
     "@archive/db": "*",
+    "@archive/storage": "*",
+    "@types/multer": "^2.2.0",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "dotenv": "^16.4.5",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
+    "multer": "^2.2.0",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@archive/storage": "*",
     "@types/bcrypt": "^6.0.0",
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.6",
