@@ -236,5 +236,82 @@ describe("API integration", () => {
 
     expect(downloadResponse.text).toBe(v2.toString("utf8"));
     expect(downloadResponse.headers["content-type"]).toContain("text/plain");
+
+    const auditLogs = await prisma.auditLog.findMany({
+      where: {
+        workspaceId,
+        entityId: {
+          in: [
+            documentId,
+            uploadResponse.body.data.version.id as string,
+            versionResponse.body.data.version.id as string,
+          ],
+        },
+      },
+      select: { action: true },
+    });
+
+    expect(auditLogs.map((log) => log.action)).toEqual(
+      expect.arrayContaining([
+        "document.created",
+        "document_version.created",
+        "document_version.downloaded",
+      ])
+    );
+  });
+
+  it("searches indexed document text and returns snippets", async () => {
+    const owner = await registerUser(`${runId}-search-owner@example.com`);
+    const workspaceId = await createWorkspace(owner.accessToken, `${runId} Search Workspace`);
+
+    const file = Buffer.from(`${runId} searchable alpha banana gamma\n`);
+    const uploadResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .field("title", "Searchable Integration Document")
+      .attach("file", file, {
+        filename: "searchable.txt",
+        contentType: "text/plain",
+      })
+      .expect(201);
+
+    const versionId = uploadResponse.body.data.version.id as string;
+    createdBlobHashes.push(uploadResponse.body.data.version.sha256 as string);
+
+    await prisma.documentSearch.update({
+      where: { versionId },
+      data: {
+        status: "indexed",
+        plainText: file.toString("utf8"),
+        error: null,
+      },
+    });
+
+    const searchResponse = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/search`)
+      .query({ q: "banana" })
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(searchResponse.body.data.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          document: expect.objectContaining({
+            title: "Searchable Integration Document",
+          }),
+          version: expect.objectContaining({
+            id: versionId,
+            search: expect.objectContaining({
+              status: "indexed",
+              error: null,
+            }),
+          }),
+          search: expect.objectContaining({
+            status: "indexed",
+            snippet: expect.stringContaining("banana"),
+          }),
+        }),
+      ])
+    );
   });
 });
