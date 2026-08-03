@@ -111,6 +111,13 @@ function parseVersionParam(value: string) {
   return version;
 }
 
+function auditRequestMetadata(req: Request) {
+  return {
+    ip: req.ip,
+    userAgent: req.get("user-agent"),
+  };
+}
+
 // --- List documents ---
 
 router.get("/", async (req, res) => {
@@ -156,6 +163,7 @@ router.post("/", uploadSingleFile, async (req, res) => {
   const { sha256, sizeBytes, mimeType } = await ingestUploadedFile(file);
 
   const result = await prisma.$transaction(async (tx) => {
+    const audit = auditRequestMetadata(req);
     const blob = await tx.blob.upsert({
       where: { sha256 },
       update: {},
@@ -184,6 +192,26 @@ router.post("/", uploadSingleFile, async (req, res) => {
         sizeBytes,
         mimeType,
         createdById: req.user!.id,
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        workspaceId: req.membership!.workspaceId,
+        actorId: req.user!.id,
+        action: "document.created",
+        entityType: "document",
+        entityId: document.id,
+        ip: audit.ip,
+        userAgent: audit.userAgent,
+        metadata: {
+          title: document.title,
+          versionId: version.id,
+          version: version.version,
+          sha256,
+          sizeBytes,
+          mimeType,
+        },
       },
     });
 
@@ -247,6 +275,7 @@ router.post("/:documentId/versions", uploadSingleFile, async (req, res) => {
   const { sha256, sizeBytes, mimeType } = await ingestUploadedFile(file);
 
   const result = await prisma.$transaction(async (tx) => {
+    const audit = auditRequestMetadata(req);
     const document = await tx.document.findFirst({
       where: {
         id: documentId,
@@ -292,6 +321,26 @@ router.post("/:documentId/versions", uploadSingleFile, async (req, res) => {
       },
     });
 
+    await tx.auditLog.create({
+      data: {
+        workspaceId: req.membership!.workspaceId,
+        actorId: req.user!.id,
+        action: "document_version.created",
+        entityType: "document_version",
+        entityId: version.id,
+        ip: audit.ip,
+        userAgent: audit.userAgent,
+        metadata: {
+          documentId: document.id,
+          title: document.title,
+          version: version.version,
+          sha256,
+          sizeBytes,
+          mimeType,
+        },
+      },
+    });
+
     return { document, version };
   });
 
@@ -331,6 +380,27 @@ router.get("/:documentId/versions/:version/download", async (req, res) => {
   if (!version) {
     throw new NotFoundError("Document version not found");
   }
+
+  const audit = auditRequestMetadata(req);
+  await prisma.auditLog.create({
+    data: {
+      workspaceId: req.membership!.workspaceId,
+      actorId: req.user!.id,
+      action: "document_version.downloaded",
+      entityType: "document_version",
+      entityId: version.id,
+      ip: audit.ip,
+      userAgent: audit.userAgent,
+      metadata: {
+        documentId: version.documentId,
+        title: version.document.title,
+        version: version.version,
+        sha256: version.sha256,
+        sizeBytes: version.sizeBytes,
+        mimeType: version.mimeType,
+      },
+    },
+  });
 
   const stream = await getBlob(version.sha256);
   const filename = safeDownloadFilename(version.document.title, version.version);
