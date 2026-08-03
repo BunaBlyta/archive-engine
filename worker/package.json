@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@archive/db": "*",
+    "@archive/storage": "*",
     "dotenv": "^16.4.5"
   },
   "devDependencies": {

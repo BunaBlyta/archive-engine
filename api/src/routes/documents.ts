@@ -118,6 +118,35 @@ function auditRequestMetadata(req: Request) {
   };
 }
 
+type SearchJobTransaction = {
+  documentSearch: typeof prisma.documentSearch;
+  job: typeof prisma.job;
+};
+
+async function createSearchIndexJob(
+  tx: SearchJobTransaction,
+  version: { id: string; workspaceId: string; documentId: string }
+) {
+  await tx.documentSearch.create({
+    data: {
+      versionId: version.id,
+      workspaceId: version.workspaceId,
+      status: "pending",
+    },
+  });
+
+  await tx.job.create({
+    data: {
+      type: "INDEX_DOCUMENT_VERSION",
+      payload: {
+        versionId: version.id,
+        workspaceId: version.workspaceId,
+        documentId: version.documentId,
+      },
+    },
+  });
+}
+
 // --- List documents ---
 
 router.get("/", async (req, res) => {
@@ -195,6 +224,8 @@ router.post("/", uploadSingleFile, async (req, res) => {
       },
     });
 
+    await createSearchIndexJob(tx, version);
+
     await tx.auditLog.create({
       data: {
         workspaceId: req.membership!.workspaceId,
@@ -228,6 +259,55 @@ router.post("/", uploadSingleFile, async (req, res) => {
         createdAt: result.document.createdAt.toISOString(),
       },
       version: formatVersion(result.version),
+    },
+  });
+});
+
+// --- Search documents ---
+
+router.get("/search", async (req, res) => {
+  const query = getStringField(req.query.q)?.trim();
+
+  if (!query) {
+    throw new ValidationError("Search query is required");
+  }
+
+  const matches = await prisma.documentSearch.findMany({
+    where: {
+      workspaceId: req.membership!.workspaceId,
+      status: "indexed",
+      plainText: {
+        contains: query,
+        mode: "insensitive",
+      },
+    },
+    include: {
+      version: {
+        include: {
+          document: true,
+        },
+      },
+    },
+    orderBy: { indexedAt: "desc" },
+    take: 25,
+  });
+
+  res.json({
+    ok: true,
+    data: {
+      results: matches.map((match) => ({
+        document: {
+          id: match.version.document.id,
+          workspaceId: match.version.document.workspaceId,
+          title: match.version.document.title,
+          createdAt: match.version.document.createdAt.toISOString(),
+        },
+        version: formatVersion(match.version),
+        search: {
+          status: match.status,
+          indexedAt: match.indexedAt.toISOString(),
+        },
+      })),
     },
   });
 });
@@ -320,6 +400,8 @@ router.post("/:documentId/versions", uploadSingleFile, async (req, res) => {
         createdById: req.user!.id,
       },
     });
+
+    await createSearchIndexJob(tx, version);
 
     await tx.auditLog.create({
       data: {

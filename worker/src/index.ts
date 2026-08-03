@@ -3,12 +3,20 @@ import dotenv from "dotenv";
 dotenv.config({ path: `${__dirname}/../../.env` });
 
 import { prisma } from "@archive/db";
+import { getBlob } from "@archive/storage";
+import { Readable } from "stream";
 
 const WORKER_ID = `worker-${process.pid}`;
 
 const LOCK_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
 let running = true;
+
+type IndexDocumentVersionPayload = {
+  versionId: string;
+  workspaceId: string;
+  documentId: string;
+};
 
 process.on("SIGTERM", () => {
   console.log("SIGTERM received, shutting down worker...");
@@ -86,12 +94,121 @@ async function runJob(job: {
     return;
   }
 
+  if (job.type === "INDEX_DOCUMENT_VERSION") {
+    await indexDocumentVersion(job.payload);
+    await prisma.job.update({
+      where: { id: job.id },
+      data: { status: "succeeded" },
+    });
+    return;
+  }
+
   // Unknown job type
   await prisma.job.update({
     where: { id: job.id },
     data: {
       status: "failed",
       lastError: `Unknown job type: ${job.type}`,
+    },
+  });
+}
+
+function parseIndexDocumentVersionPayload(payload: unknown): IndexDocumentVersionPayload {
+  if (typeof payload === "object" && payload !== null) {
+    const value = payload as Record<string, unknown>;
+
+    if (
+      typeof value.versionId === "string" &&
+      typeof value.workspaceId === "string" &&
+      typeof value.documentId === "string"
+    ) {
+      return {
+        versionId: value.versionId,
+        workspaceId: value.workspaceId,
+        documentId: value.documentId,
+      };
+    }
+  }
+
+  throw new Error("Invalid INDEX_DOCUMENT_VERSION payload");
+}
+
+async function streamToString(stream: Readable): Promise<string> {
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function isTextMimeType(mimeType: string) {
+  return (
+    mimeType.startsWith("text/") ||
+    mimeType === "application/json" ||
+    mimeType.endsWith("+json")
+  );
+}
+
+async function indexDocumentVersion(payload: unknown) {
+  const { versionId, workspaceId, documentId } =
+    parseIndexDocumentVersionPayload(payload);
+
+  const version = await prisma.documentVersion.findFirst({
+    where: {
+      id: versionId,
+      workspaceId,
+      documentId,
+    },
+    select: {
+      id: true,
+      workspaceId: true,
+      documentId: true,
+      sha256: true,
+      mimeType: true,
+    },
+  });
+
+  if (!version) {
+    throw new Error(`Document version not found: ${versionId}`);
+  }
+
+  if (!isTextMimeType(version.mimeType)) {
+    await prisma.documentSearch.upsert({
+      where: { versionId: version.id },
+      update: {
+        status: "unsupported",
+        plainText: null,
+        error: `Unsupported mime type: ${version.mimeType}`,
+      },
+      create: {
+        versionId: version.id,
+        workspaceId: version.workspaceId,
+        status: "unsupported",
+        plainText: null,
+        error: `Unsupported mime type: ${version.mimeType}`,
+      },
+    });
+    return;
+  }
+
+  const stream = await getBlob(version.sha256);
+  const plainText = await streamToString(stream);
+
+  await prisma.documentSearch.upsert({
+    where: { versionId: version.id },
+    update: {
+      status: "indexed",
+      plainText,
+      error: null,
+    },
+    create: {
+      versionId: version.id,
+      workspaceId: version.workspaceId,
+      status: "indexed",
+      plainText,
+      error: null,
     },
   });
 }
