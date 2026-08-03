@@ -66,6 +66,43 @@ beforeAll(async () => {
 });
 
 describe("API integration", () => {
+  it("logs in, refreshes with cookie, logs out, and rejects wrong passwords", async () => {
+    const email = `${runId}-auth-flow@example.com`;
+    await registerUser(email);
+
+    const wrongPasswordResponse = await request(app)
+      .post("/v1/auth/login")
+      .send({ email, password: "wrong-password" })
+      .expect(401);
+
+    expect(wrongPasswordResponse.body.error.code).toBe("UNAUTHORIZED");
+
+    const agent = request.agent(app);
+
+    const loginResponse = await agent
+      .post("/v1/auth/login")
+      .send({ email, password })
+      .expect(200);
+
+    expect(loginResponse.body.data.accessToken).toEqual(expect.any(String));
+
+    const refreshResponse = await agent
+      .post("/v1/auth/refresh")
+      .expect(200);
+
+    expect(refreshResponse.body.data.accessToken).toEqual(expect.any(String));
+
+    await agent
+      .post("/v1/auth/logout")
+      .expect(200);
+
+    const refreshAfterLogoutResponse = await agent
+      .post("/v1/auth/refresh")
+      .expect(401);
+
+    expect(refreshAfterLogoutResponse.body.error.code).toBe("UNAUTHORIZED");
+  });
+
   it("registers a user and creates a workspace", async () => {
     const email = `${runId}-owner@example.com`;
     const owner = await registerUser(email);
@@ -99,6 +136,44 @@ describe("API integration", () => {
       .expect(403);
 
     expect(response.body.error.code).toBe("FORBIDDEN");
+  });
+
+  it("allows admins to add members and rejects member-only invitations", async () => {
+    const owner = await registerUser(`${runId}-member-owner@example.com`);
+    const memberEmail = `${runId}-member@example.com`;
+    const thirdUserEmail = `${runId}-third-user@example.com`;
+    const member = await registerUser(memberEmail);
+    await registerUser(thirdUserEmail);
+    const workspaceId = await createWorkspace(owner.accessToken, `${runId} Member Workspace`);
+
+    const addMemberResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/members`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({ email: memberEmail })
+      .expect(201);
+
+    expect(addMemberResponse.body.data.member).toEqual(
+      expect.objectContaining({
+        email: memberEmail,
+        role: "member",
+      })
+    );
+
+    const duplicateResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/members`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({ email: memberEmail })
+      .expect(409);
+
+    expect(duplicateResponse.body.error.code).toBe("CONFLICT");
+
+    const forbiddenResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/members`)
+      .set("Authorization", `Bearer ${member.accessToken}`)
+      .send({ email: thirdUserEmail })
+      .expect(403);
+
+    expect(forbiddenResponse.body.error.code).toBe("FORBIDDEN");
   });
 
   it("uploads, versions, and downloads a text document", async () => {
