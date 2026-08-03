@@ -3,7 +3,7 @@ import { prisma } from "@archive/db";
 import { ForbiddenError } from "./errorHandler";
 
 export async function requireMembership(req: Request, _res: Response, next: NextFunction) {
-const workspaceId = req.params.workspaceId as string;
+  const workspaceId = req.params.workspaceId as string;
 
   const membership = await prisma.membership.findUnique({
     where: {
@@ -21,7 +21,7 @@ const workspaceId = req.params.workspaceId as string;
   req.membership = {
     workspaceId: membership.workspaceId,
     userId: membership.userId,
-    role: membership.role,
+    role: membership.role as "admin" | "member",
   };
 
   next();

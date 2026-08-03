@@ -8,7 +8,7 @@ declare namespace Express {
     membership?: {
       workspaceId: string;
       userId: string;
-      role: string;
+      role: "admin" | "member";
     };
   }
 }
