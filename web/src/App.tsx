@@ -18,7 +18,18 @@ import {
   Users,
 } from "lucide-react";
 import { api, ApiError } from "./api/client";
-import type { ArchiveDocument, AuditLog, DocumentVersion, Pagination, SearchResult, Workspace, WorkspaceMember } from "./api/types";
+import type {
+  ArchiveDocument,
+  AuditLog,
+  DocumentDraft,
+  DocumentVersion,
+  LineDiffLine,
+  Pagination,
+  ProposedChangeDetail,
+  SearchResult,
+  Workspace,
+  WorkspaceMember,
+} from "./api/types";
 import { useAppStore } from "./store/appStore";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -78,6 +89,13 @@ function searchStatusText(status?: string | null, error?: string | null) {
   if (status === "processing") return "The worker is extracting searchable text.";
   if (status === "unsupported") return "This file type can be stored and viewed, but not searched.";
   return "No search index exists for this version.";
+}
+
+function proposalStatusTone(status?: string | null): "neutral" | "green" | "amber" | "red" | "blue" {
+  if (status === "approved" || status === "published") return "green";
+  if (status === "changes_requested") return "red";
+  if (status === "open") return "blue";
+  return "neutral";
 }
 
 function isTextPreview(mimeType: string) {
@@ -616,6 +634,19 @@ function DocumentDetail({
             ) : null}
           </div>
           <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            {newestVersion && isTextPreview(newestVersion.mimeType) ? (
+              <ProposeChangesDialog
+                token={token}
+                workspace={workspace}
+                document={document}
+                onPublished={async () => {
+                  await onChanged(document.id);
+                  onNotice({ title: "Proposed change published" });
+                }}
+                onError={onError}
+                onNotice={onNotice}
+              />
+            ) : null}
             {newestVersion ? (
               <VersionPreviewDialog token={token} workspace={workspace} document={document} version={newestVersion} onError={onError} />
             ) : null}
@@ -665,6 +696,231 @@ function DocumentDetail({
         ))}
       </div>
     </section>
+  );
+}
+
+function ProposeChangesDialog({
+  token,
+  workspace,
+  document,
+  onPublished,
+  onError,
+  onNotice,
+}: {
+  token: string;
+  workspace: Workspace;
+  document: ArchiveDocument;
+  onPublished: () => Promise<void>;
+  onError: (message: string) => void;
+  onNotice: (notice: Notice) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<DocumentDraft | null>(null);
+  const [content, setContent] = useState("");
+  const [summary, setSummary] = useState("");
+  const [detail, setDetail] = useState<ProposedChangeDetail | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+
+  async function createDraft() {
+    setBusy(true);
+    setBusyLabel("Creating draft");
+    setDraft(null);
+    setContent("");
+    setSummary("");
+    setDetail(null);
+    try {
+      const data = await api.createDraft(token, workspace.id, document.id);
+      setDraft(data.draft);
+      setContent(data.draft.content);
+    } catch (error) {
+      onError(errorMessage(error));
+      setOpen(false);
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+    }
+  }
+
+  async function loadProposedChange(proposedChangeId: string) {
+    const data = await api.getProposedChange(token, workspace.id, document.id, proposedChangeId);
+    setDetail(data);
+  }
+
+  async function submitForReview(event: React.FormEvent) {
+    event.preventDefault();
+    if (!draft || !content.trim()) return;
+    setBusy(true);
+    setBusyLabel("Submitting");
+    try {
+      const updated = await api.updateDraftContent(token, workspace.id, document.id, draft.id, content);
+      setDraft(updated.draft);
+      const proposed = await api.proposeDraft(token, workspace.id, document.id, updated.draft.id, summary);
+      await loadProposedChange(proposed.proposedChange.id);
+      onNotice({ title: "Proposed change opened" });
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+    }
+  }
+
+  async function approve() {
+    if (!detail) return;
+    setBusy(true);
+    setBusyLabel("Approving");
+    try {
+      await api.createReview(token, workspace.id, document.id, detail.proposedChange.id, "approved", "Approved");
+      await loadProposedChange(detail.proposedChange.id);
+      onNotice({ title: "Proposed change approved" });
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+    }
+  }
+
+  async function publish() {
+    if (!detail) return;
+    setBusy(true);
+    setBusyLabel("Publishing");
+    try {
+      await api.publishProposedChange(token, workspace.id, document.id, detail.proposedChange.id);
+      await loadProposedChange(detail.proposedChange.id);
+      await onPublished();
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+    }
+  }
+
+  function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (nextOpen) {
+      void createDraft();
+    }
+  }
+
+  const canPublish = detail?.proposedChange.status === "approved";
+  const isPublished = detail?.proposedChange.status === "published";
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger asChild>
+        <Button size="sm"><Pencil className="h-4 w-4" />Propose changes</Button>
+      </DialogTrigger>
+      <DialogContent className="flex h-[min(calc(100vh-2rem),52rem)] w-[min(calc(100vw-2rem),76rem)] flex-col">
+        <DialogHeader className="shrink-0">
+          <DialogTitle>Propose changes</DialogTitle>
+          <DialogDescription>{document.title}</DialogDescription>
+        </DialogHeader>
+        {busy && !draft && !detail ? (
+          <div className="grid min-h-0 flex-1 place-items-center text-sm text-neutral-500">
+            <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />{busyLabel}</span>
+          </div>
+        ) : detail ? (
+          <div className="min-h-0 flex-1 space-y-4 overflow-auto pr-1">
+            <div className="flex flex-col gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">Proposed change</span>
+                  <Badge tone={proposalStatusTone(detail.proposedChange.status)}>{detail.proposedChange.status}</Badge>
+                </div>
+                <p className="mt-1 text-sm text-neutral-500">Based on version {detail.baseVersion.version}</p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Button type="button" variant="secondary" onClick={approve} disabled={busy || isPublished}>
+                  {busy && busyLabel === "Approving" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
+                  Approve
+                </Button>
+                <Button type="button" onClick={publish} disabled={busy || !canPublish}>
+                  {busy && busyLabel === "Publishing" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  Publish
+                </Button>
+              </div>
+            </div>
+            <ProposedChangeDiffView detail={detail} />
+          </div>
+        ) : (
+          <form onSubmit={submitForReview} className="flex min-h-0 flex-1 flex-col gap-4">
+            <Field label="Draft content">
+              <textarea
+                value={content}
+                onChange={(event) => setContent(event.target.value)}
+                className="min-h-[22rem] w-full resize-none rounded-md border border-neutral-200 bg-white px-3 py-2 font-mono text-sm leading-6 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                required
+              />
+            </Field>
+            <Field label="Summary">
+              <Input value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="Optional" />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <Button type="submit" disabled={busy || !draft || !content.trim()}>
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
+                Submit for review
+              </Button>
+            </div>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ProposedChangeDiffView({ detail }: { detail: ProposedChangeDetail }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <TextPanel title="Published version" text={detail.baseContent} />
+        <TextPanel title="Draft" text={detail.draftContent} />
+      </div>
+      <div className="rounded-md border border-neutral-200">
+        <div className="flex items-center justify-between border-b border-neutral-200 bg-neutral-50 px-3 py-2">
+          <h4 className="text-sm font-semibold">Changes</h4>
+          <Badge tone={detail.diff.type === "too_large" ? "amber" : "neutral"}>{detail.diff.type}</Badge>
+        </div>
+        {detail.diff.type === "too_large" ? (
+          <div className="p-4 text-sm text-neutral-600">This change is too large to display as a line diff.</div>
+        ) : (
+          <div className="max-h-[22rem] overflow-auto bg-white font-mono text-xs">
+            {detail.diff.lines.map((line, index) => (
+              <DiffLine key={`${line.type}-${line.oldLineNumber ?? "x"}-${line.newLineNumber ?? "x"}-${index}`} line={line} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TextPanel({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="min-w-0 rounded-md border border-neutral-200">
+      <div className="border-b border-neutral-200 bg-neutral-50 px-3 py-2 text-sm font-semibold">{title}</div>
+      <pre className="max-h-[18rem] overflow-auto whitespace-pre-wrap p-3 font-mono text-xs leading-5 text-neutral-800">{text}</pre>
+    </div>
+  );
+}
+
+function DiffLine({ line }: { line: LineDiffLine }) {
+  const lineClass = line.type === "added"
+    ? "bg-emerald-50 text-emerald-900"
+    : line.type === "removed"
+      ? "bg-red-50 text-red-900"
+      : "text-neutral-700";
+  const marker = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
+
+  return (
+    <div className={cn("grid grid-cols-[3rem_3rem_1.5rem_minmax(0,1fr)] gap-2 px-3 py-1", lineClass)}>
+      <span className="select-none text-right text-neutral-400">{line.oldLineNumber ?? ""}</span>
+      <span className="select-none text-right text-neutral-400">{line.newLineNumber ?? ""}</span>
+      <span className="select-none">{marker}</span>
+      <span className="whitespace-pre-wrap break-words">{line.text || " "}</span>
+    </div>
   );
 }
 

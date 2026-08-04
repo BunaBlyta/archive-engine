@@ -46,6 +46,64 @@ export type DocumentVersion = {
   search: SearchStatus;
 };
 
+export type DocumentDraft = {
+  id: string;
+  workspaceId: string;
+  documentId: string;
+  baseVersionId: string;
+  title: string;
+  content: string;
+  status: "draft" | "proposed" | "published" | "abandoned" | string;
+  createdById: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DocumentDraftMetadata = Omit<DocumentDraft, "content">;
+
+export type ProposedChange = {
+  id: string;
+  workspaceId: string;
+  documentId: string;
+  draftId: string;
+  status: "open" | "approved" | "changes_requested" | "published" | "closed" | string;
+  summary: string | null;
+  openedById: string | null;
+  openedAt: string;
+  closedAt: string | null;
+};
+
+export type Review = {
+  id: string;
+  workspaceId: string;
+  proposedChangeId: string;
+  reviewerId: string | null;
+  state: "approved" | "changes_requested" | "commented" | string;
+  body: string | null;
+  createdAt: string;
+};
+
+export type LineDiffLine = {
+  type: "unchanged" | "added" | "removed";
+  oldLineNumber: number | null;
+  newLineNumber: number | null;
+  text: string;
+};
+
+export type ProposedChangeDiff =
+  | { type: "line"; lines: LineDiffLine[] }
+  | { type: "too_large" };
+
+export type ProposedChangeDetail = {
+  proposedChange: ProposedChange;
+  draft: DocumentDraftMetadata;
+  baseVersion: DocumentVersion;
+  baseContent: string;
+  draftContent: string;
+  diff: ProposedChangeDiff;
+  reviews: Review[];
+};
+
 export type ArchiveDocument = {
   id: string;
   workspaceId: string;

@@ -2,7 +2,12 @@ import type {
   ApiEnvelope,
   ArchiveDocument,
   AuditLog,
+  DocumentDraft,
+  DocumentVersion,
   Pagination,
+  ProposedChange,
+  ProposedChangeDetail,
+  Review,
   SearchResult,
   User,
   Workspace,
@@ -167,6 +172,70 @@ export const api = {
     return apiRequest<{ document: { id: string; archivedAt: string } }>(
       `/v1/workspaces/${workspaceId}/documents/${documentId}`,
       { method: "DELETE" },
+      token
+    );
+  },
+
+  createDraft(token: string, workspaceId: string, documentId: string) {
+    return apiRequest<{ draft: DocumentDraft }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/drafts`,
+      { method: "POST" },
+      token
+    );
+  },
+
+  updateDraftContent(token: string, workspaceId: string, documentId: string, draftId: string, content: string) {
+    return apiRequest<{ draft: DocumentDraft }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ content }),
+      },
+      token
+    );
+  },
+
+  proposeDraft(token: string, workspaceId: string, documentId: string, draftId: string, summary?: string) {
+    return apiRequest<{ proposedChange: ProposedChange }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}/propose`,
+      {
+        method: "POST",
+        body: JSON.stringify(summary?.trim() ? { summary: summary.trim() } : {}),
+      },
+      token
+    );
+  },
+
+  getProposedChange(token: string, workspaceId: string, documentId: string, proposedChangeId: string) {
+    return apiRequest<ProposedChangeDetail>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}`,
+      {},
+      token
+    );
+  },
+
+  createReview(
+    token: string,
+    workspaceId: string,
+    documentId: string,
+    proposedChangeId: string,
+    state: "approved" | "changes_requested" | "commented",
+    body?: string
+  ) {
+    return apiRequest<{ review: Review; proposedChangeStatus: string }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/reviews`,
+      {
+        method: "POST",
+        body: JSON.stringify({ state, ...(body ? { body } : {}) }),
+      },
+      token
+    );
+  },
+
+  publishProposedChange(token: string, workspaceId: string, documentId: string, proposedChangeId: string) {
+    return apiRequest<{ version: DocumentVersion }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/publish`,
+      { method: "POST" },
       token
     );
   },
