@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import pinoHttp from "pino-http";
 import { requestId } from "./middleware/requestId";
 import { errorHandler } from "./middleware/errorHandler";
@@ -10,7 +11,12 @@ import workspacesRouter from "./routes/workspaces";
 
 export function createApp() {
   const app = express();
+  const webOrigin = process.env.WEB_ORIGIN ?? "http://localhost:5173";
 
+  app.use(cors({
+    origin: webOrigin,
+    credentials: true,
+  }));
   app.use(express.json());
   app.use(cookieParser());
   app.use(requestId);

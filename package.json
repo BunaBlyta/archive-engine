@@ -5,11 +5,14 @@
   "workspaces": [
     "api",
     "worker",
+    "web",
     "packages/*"
   ],
   "scripts": {
     "dev:api": "npm run dev -w api",
     "dev:worker": "npm run dev -w worker",
+    "dev:web": "npm run dev -w web",
+    "build:web": "npm run build -w web",
     "db:generate": "npm run db:generate -w @archive/db",
     "db:migrate": "npm run db:migrate -w @archive/db",
     "db:studio": "npm run db:studio -w @archive/db",
