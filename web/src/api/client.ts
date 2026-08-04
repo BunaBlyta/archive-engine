@@ -6,6 +6,7 @@ import type {
   SearchResult,
   User,
   Workspace,
+  WorkspaceMember,
 } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3000";
@@ -104,6 +105,14 @@ export const api = {
     );
   },
 
+  listMembers(token: string, workspaceId: string) {
+    return apiRequest<{ members: WorkspaceMember[] }>(
+      `/v1/workspaces/${workspaceId}/members`,
+      {},
+      token
+    );
+  },
+
   listDocuments(token: string, workspaceId: string, offset = 0, limit = 25) {
     return apiRequest<{ pagination: Pagination; documents: ArchiveDocument[] }>(
       `/v1/workspaces/${workspaceId}/documents?limit=${limit}&offset=${offset}`,
@@ -139,6 +148,25 @@ export const api = {
     return apiRequest<{ document: ArchiveDocument }>(
       `/v1/workspaces/${workspaceId}/documents/${documentId}/versions`,
       { method: "POST", body: form },
+      token
+    );
+  },
+
+  renameDocument(token: string, workspaceId: string, documentId: string, title: string) {
+    return apiRequest<{ document: ArchiveDocument }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ title }),
+      },
+      token
+    );
+  },
+
+  archiveDocument(token: string, workspaceId: string, documentId: string) {
+    return apiRequest<{ document: { id: string; archivedAt: string } }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}`,
+      { method: "DELETE" },
       token
     );
   },

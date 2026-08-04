@@ -71,13 +71,14 @@ model Document {
   title       String
   createdById String?
   createdAt   DateTime @default(now())
+  archivedAt  DateTime?
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   createdBy User?     @relation("DocumentsCreated", fields: [createdById], references: [id], onDelete: SetNull)
 
   versions DocumentVersion[]
 
-  @@index([workspaceId, createdAt])
+  @@index([workspaceId, archivedAt, createdAt])
 }
 
 model DocumentVersion {

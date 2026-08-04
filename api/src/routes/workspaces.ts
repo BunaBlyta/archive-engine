@@ -157,6 +157,40 @@ router.get("/:workspaceId/audit-logs", requireMembership, async (req, res) => {
 
 router.use("/:workspaceId/documents", requireMembership, documentsRouter);
 
+// --- List members ---
+
+router.get("/:workspaceId/members", requireMembership, async (req, res) => {
+  const members = await prisma.membership.findMany({
+    where: {
+      workspaceId: req.membership!.workspaceId,
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          email: true,
+        },
+      },
+    },
+    orderBy: [
+      { role: "asc" },
+      { createdAt: "asc" },
+    ],
+  });
+
+  res.json({
+    ok: true,
+    data: {
+      members: members.map((member) => ({
+        userId: member.user.id,
+        email: member.user.email,
+        role: member.role,
+        createdAt: member.createdAt.toISOString(),
+      })),
+    },
+  });
+});
+
 // --- Add member ---
 
 const addMemberSchema = z.object({
@@ -199,12 +233,37 @@ router.post("/:workspaceId/members", requireMembership, async (req, res) => {
     throw new ConflictError("User is already a member of this workspace");
   }
 
-  const membership = await prisma.membership.create({
-    data: {
-      workspaceId: req.membership!.workspaceId,
-      userId: user.id,
-      role,
-    },
+  const audit = {
+    ip: req.ip,
+    userAgent: req.get("user-agent"),
+  };
+
+  const membership = await prisma.$transaction(async (tx) => {
+    const created = await tx.membership.create({
+      data: {
+        workspaceId: req.membership!.workspaceId,
+        userId: user.id,
+        role,
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        workspaceId: req.membership!.workspaceId,
+        actorId: req.user!.id,
+        action: "membership.created",
+        entityType: "membership",
+        entityId: user.id,
+        ip: audit.ip,
+        userAgent: audit.userAgent,
+        metadata: {
+          email: user.email,
+          role,
+        },
+      },
+    });
+
+    return created;
   });
 
   res.status(201).json({

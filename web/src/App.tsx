@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Archive,
   Activity,
   ArrowDownToLine,
+  Pencil,
   FilePlus2,
   FileText,
   History,
+  Eye,
   Loader2,
   LogOut,
   Plus,
@@ -15,7 +18,7 @@ import {
   Users,
 } from "lucide-react";
 import { api, ApiError } from "./api/client";
-import type { ArchiveDocument, AuditLog, DocumentVersion, Pagination, SearchResult, Workspace } from "./api/types";
+import type { ArchiveDocument, AuditLog, DocumentVersion, Pagination, SearchResult, Workspace, WorkspaceMember } from "./api/types";
 import { useAppStore } from "./store/appStore";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -56,6 +59,44 @@ function statusTone(status?: string | null): "neutral" | "green" | "amber" | "re
   if (status === "pending") return "amber";
   if (status === "processing") return "blue";
   return "neutral";
+}
+
+function searchStatusLabel(status?: string | null) {
+  if (status === "indexed") return "searchable";
+  if (status === "failed") return "index failed";
+  if (status === "pending") return "index pending";
+  if (status === "processing") return "indexing";
+  if (status === "unsupported") return "not searchable";
+  return "not indexed";
+}
+
+function searchStatusText(status?: string | null, error?: string | null) {
+  if (error) return error;
+  if (status === "indexed") return "Content is indexed and available in workspace search.";
+  if (status === "failed") return "Text extraction failed. Upload a new version or check the worker logs.";
+  if (status === "pending") return "Waiting for the worker to index this version.";
+  if (status === "processing") return "The worker is extracting searchable text.";
+  if (status === "unsupported") return "This file type can be stored and viewed, but not searched.";
+  return "No search index exists for this version.";
+}
+
+function isTextPreview(mimeType: string) {
+  return (
+    mimeType.startsWith("text/") ||
+    mimeType === "application/json" ||
+    mimeType.endsWith("+json") ||
+    mimeType === "application/xml" ||
+    mimeType.endsWith("+xml")
+  );
+}
+
+function previewKind(mimeType: string): "text" | "image" | "pdf" | "audio" | "video" | "unsupported" {
+  if (isTextPreview(mimeType)) return "text";
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType === "application/pdf") return "pdf";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  return "unsupported";
 }
 
 function latestVersion(document: ArchiveDocument) {
@@ -471,6 +512,10 @@ function DocumentsPanel({
           await loadDocument(documentId);
           await load();
         }}
+        onArchived={async () => {
+          setSelected(null);
+          await load(0);
+        }}
         onError={onError}
         onNotice={onNotice}
       />
@@ -516,7 +561,7 @@ function DocumentTable({
                 <td className="px-4 py-3 font-medium">{document.title}</td>
                 <td className="px-4 py-3 text-neutral-600">{version ? `v${version.version} · ${formatBytes(version.sizeBytes)}` : "None"}</td>
                 <td className="px-4 py-3">
-                  <Badge tone={statusTone(version?.search?.status)}>{version?.search?.status ?? "not indexed"}</Badge>
+                  <Badge tone={statusTone(version?.search?.status)}>{searchStatusLabel(version?.search?.status)}</Badge>
                 </td>
                 <td className="px-4 py-3 text-neutral-600">{formatDate(document.createdAt)}</td>
               </tr>
@@ -533,6 +578,7 @@ function DocumentDetail({
   workspace,
   document,
   onChanged,
+  onArchived,
   onError,
   onNotice,
 }: {
@@ -540,6 +586,7 @@ function DocumentDetail({
   workspace: Workspace;
   document: ArchiveDocument | null;
   onChanged: (documentId: string) => Promise<void>;
+  onArchived: () => Promise<void>;
   onError: (message: string) => void;
   onNotice: (notice: Notice) => void;
 }) {
@@ -551,24 +598,58 @@ function DocumentDetail({
     );
   }
 
+  const newestVersion = latestVersion(document);
+
   return (
     <section className="rounded-lg border border-neutral-200 bg-white">
       <div className="border-b border-neutral-200 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="truncate font-semibold">{document.title}</h3>
-            <p className="mt-1 text-xs text-neutral-500">{document.id}</p>
+            <p className="mt-1 text-sm text-neutral-500">
+              {document.versions?.length ?? 0} versions · Created {formatDate(document.createdAt)}
+            </p>
+            {newestVersion ? (
+              <p className="mt-2 text-xs text-neutral-500">
+                Latest: v{newestVersion.version} · {formatBytes(newestVersion.sizeBytes)} · {newestVersion.mimeType}
+              </p>
+            ) : null}
           </div>
-          <UploadVersionDialog
-            token={token}
-            workspace={workspace}
-            document={document}
-            onUploaded={async () => {
-              await onChanged(document.id);
-              onNotice({ title: "Version uploaded" });
-            }}
-            onError={onError}
-          />
+          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            {newestVersion ? (
+              <VersionPreviewDialog token={token} workspace={workspace} document={document} version={newestVersion} onError={onError} />
+            ) : null}
+            <RenameDocumentDialog
+              token={token}
+              workspace={workspace}
+              document={document}
+              onRenamed={async () => {
+                await onChanged(document.id);
+                onNotice({ title: "Document renamed" });
+              }}
+              onError={onError}
+            />
+            <UploadVersionDialog
+              token={token}
+              workspace={workspace}
+              document={document}
+              onUploaded={async () => {
+                await onChanged(document.id);
+                onNotice({ title: "Version uploaded" });
+              }}
+              onError={onError}
+            />
+            <ArchiveDocumentDialog
+              token={token}
+              workspace={workspace}
+              document={document}
+              onArchived={async () => {
+                await onArchived();
+                onNotice({ title: "Document archived" });
+              }}
+              onError={onError}
+            />
+          </div>
         </div>
       </div>
       <div className="divide-y divide-neutral-100">
@@ -600,10 +681,10 @@ function VersionRow({
   version: DocumentVersion;
   onError: (message: string) => void;
 }) {
-  const [busy, setBusy] = useState(false);
+  const [downloadBusy, setDownloadBusy] = useState(false);
 
   async function download() {
-    setBusy(true);
+    setDownloadBusy(true);
     try {
       const { blob, filename } = await api.downloadVersion(token, workspace.id, document.id, version.version);
       const url = URL.createObjectURL(blob);
@@ -615,7 +696,7 @@ function VersionRow({
     } catch (error) {
       onError(errorMessage(error));
     } finally {
-      setBusy(false);
+      setDownloadBusy(false);
     }
   }
 
@@ -625,18 +706,239 @@ function VersionRow({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">Version {version.version}</span>
-            <Badge tone={statusTone(version.search?.status)}>{version.search?.status ?? "not indexed"}</Badge>
+            <Badge tone={statusTone(version.search?.status)}>{searchStatusLabel(version.search?.status)}</Badge>
           </div>
           <div className="mt-1 truncate text-sm text-neutral-600">{version.originalFilename ?? "Unnamed file"}</div>
           <div className="mt-1 text-xs text-neutral-500">{formatBytes(version.sizeBytes)} · {version.mimeType} · {formatDate(version.createdAt)}</div>
+          <p className="mt-2 text-xs text-neutral-500">{searchStatusText(version.search?.status, version.search?.error)}</p>
           <div className="mt-2 break-all font-mono text-[11px] text-neutral-400">{version.sha256}</div>
         </div>
-        <Button variant="secondary" size="icon" onClick={download} disabled={busy} aria-label={`Download version ${version.version}`}>
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}
-        </Button>
+        <div className="flex shrink-0 gap-2">
+          <VersionPreviewDialog token={token} workspace={workspace} document={document} version={version} onError={onError} />
+          <Button variant="secondary" size="icon" onClick={download} disabled={downloadBusy} aria-label={`Download version ${version.version}`}>
+            {downloadBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}
+          </Button>
+        </div>
       </div>
-      {version.search?.error ? <p className="mt-2 text-sm text-red-600">{version.search.error}</p> : null}
     </div>
+  );
+}
+
+function VersionPreviewDialog({
+  token,
+  workspace,
+  document,
+  version,
+  onError,
+}: {
+  token: string;
+  workspace: Workspace;
+  document: ArchiveDocument;
+  version: DocumentVersion;
+  onError: (message: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [filename, setFilename] = useState(version.originalFilename ?? `document-v${version.version}`);
+  const [text, setText] = useState<string | null>(null);
+  const kind = previewKind(version.mimeType);
+
+  useEffect(() => {
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [objectUrl]);
+
+  async function loadPreview() {
+    setBusy(true);
+    setText(null);
+    try {
+      const file = await api.downloadVersion(token, workspace.id, document.id, version.version);
+      const url = URL.createObjectURL(file.blob);
+      setObjectUrl((previousUrl) => {
+        if (previousUrl) URL.revokeObjectURL(previousUrl);
+        return url;
+      });
+      setFilename(file.filename);
+
+      if (kind === "text") {
+        setText(await file.blob.text());
+      }
+    } catch (error) {
+      onError(errorMessage(error));
+      setOpen(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (nextOpen && !objectUrl && !busy) {
+      void loadPreview();
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="icon" aria-label={`View version ${version.version}`}>
+          <Eye className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="flex h-[min(calc(100vh-2rem),48rem)] w-[min(calc(100vw-2rem),70rem)] flex-col">
+        <DialogHeader className="mb-4 shrink-0">
+          <DialogTitle>{document.title} · Version {version.version}</DialogTitle>
+          <DialogDescription>{filename} · {version.mimeType} · {formatBytes(version.sizeBytes)}</DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-neutral-200 bg-neutral-50">
+          {busy ? (
+            <div className="grid h-full place-items-center text-sm text-neutral-500">
+              <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Loading preview</span>
+            </div>
+          ) : objectUrl && kind === "pdf" ? (
+            <iframe title={`${document.title} version ${version.version}`} src={objectUrl} className="h-full w-full bg-white" />
+          ) : objectUrl && kind === "image" ? (
+            <div className="grid h-full place-items-center overflow-auto p-4">
+              <img src={objectUrl} alt={filename} className="max-h-full max-w-full object-contain" />
+            </div>
+          ) : objectUrl && kind === "video" ? (
+            <div className="grid h-full place-items-center p-4">
+              <video src={objectUrl} controls className="max-h-full max-w-full" />
+            </div>
+          ) : objectUrl && kind === "audio" ? (
+            <div className="grid h-full place-items-center p-6">
+              <audio src={objectUrl} controls className="w-full max-w-xl" />
+            </div>
+          ) : kind === "text" && text !== null ? (
+            <pre className="h-full overflow-auto whitespace-pre-wrap p-4 font-mono text-sm leading-6 text-neutral-800">{text}</pre>
+          ) : (
+            <EmptyState
+              icon={<FileText className="h-5 w-5" />}
+              title="Preview unavailable"
+              text="This file type cannot be displayed in the browser."
+            />
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RenameDocumentDialog({
+  token,
+  workspace,
+  document,
+  onRenamed,
+  onError,
+}: {
+  token: string;
+  workspace: Workspace;
+  document: ArchiveDocument;
+  onRenamed: () => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState(document.title);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open) setTitle(document.title);
+  }, [document.title, open]);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+    setBusy(true);
+    try {
+      await api.renameDocument(token, workspace.id, document.id, nextTitle);
+      setOpen(false);
+      await onRenamed();
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="sm"><Pencil className="h-4 w-4" />Rename</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Rename document</DialogTitle>
+          <DialogDescription>Update the title shown in lists, search results, and audit metadata.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-4">
+          <Field label="Title">
+            <Input value={title} onChange={(event) => setTitle(event.target.value)} required />
+          </Field>
+          <Button disabled={busy || !title.trim()}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+            Save
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ArchiveDocumentDialog({
+  token,
+  workspace,
+  document,
+  onArchived,
+  onError,
+}: {
+  token: string;
+  workspace: Workspace;
+  document: ArchiveDocument;
+  onArchived: () => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function archiveDocument() {
+    setBusy(true);
+    try {
+      await api.archiveDocument(token, workspace.id, document.id);
+      setOpen(false);
+      await onArchived();
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="sm"><Archive className="h-4 w-4" />Archive</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Archive document</DialogTitle>
+          <DialogDescription>Remove this document from active lists and search without deleting its history.</DialogDescription>
+        </DialogHeader>
+        <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
+          <div className="font-medium">{document.title}</div>
+          <div className="mt-1 text-sm text-neutral-500">{document.versions?.length ?? 0} versions will be hidden from active workflows.</div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button type="button" variant="danger" onClick={archiveDocument} disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
+            Archive
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -790,13 +1092,18 @@ function SearchPanel({ token, workspace, onError }: { token: string; workspace: 
           <EmptyState icon={<Search className="h-5 w-5" />} title="No search results" text="Search indexes are created when documents are uploaded." />
         ) : results.map((result) => (
           <div key={`${result.document.id}-${result.version.id}`} className="p-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="font-semibold">{result.document.title}</h3>
-              <Badge tone="green">v{result.version.version}</Badge>
-              <Badge tone={statusTone(result.search.status)}>{result.search.status}</Badge>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-semibold">{result.document.title}</h3>
+                  <Badge tone="green">v{result.version.version}</Badge>
+                  <Badge tone={statusTone(result.search.status)}>{searchStatusLabel(result.search.status)}</Badge>
+                </div>
+                <p className="mt-2 text-sm text-neutral-700">{result.search.snippet ?? "Matched indexed content"}</p>
+                <p className="mt-2 text-xs text-neutral-500">{result.version.originalFilename ?? result.version.mimeType} · {formatDate(result.search.indexedAt)}</p>
+              </div>
+              <VersionPreviewDialog token={token} workspace={workspace} document={result.document} version={result.version} onError={onError} />
             </div>
-            <p className="mt-2 text-sm text-neutral-700">{result.search.snippet ?? "Matched indexed content"}</p>
-            <p className="mt-2 text-xs text-neutral-500">{result.version.originalFilename ?? result.version.mimeType} · {formatDate(result.search.indexedAt)}</p>
           </div>
         ))}
       </div>
@@ -881,9 +1188,27 @@ function MembersPanel({
   onError: (message: string) => void;
   onNotice: (notice: Notice) => void;
 }) {
+  const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"admin" | "member">("member");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  async function loadMembers() {
+    setLoading(true);
+    try {
+      const data = await api.listMembers(token, workspace.id);
+      setMembers(data.members);
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadMembers();
+  }, [workspace.id]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -892,6 +1217,7 @@ function MembersPanel({
       await api.addMember(token, workspace.id, email, role);
       setEmail("");
       setRole("member");
+      await loadMembers();
       onNotice({ title: "Member added" });
     } catch (error) {
       onError(errorMessage(error));
@@ -901,30 +1227,63 @@ function MembersPanel({
   }
 
   return (
-    <section className="max-w-xl rounded-lg border border-neutral-200 bg-white p-5">
-      <div className="mb-5">
-        <h3 className="font-semibold">Add member</h3>
-        <p className="text-sm text-neutral-500">Admins can add registered users to this workspace.</p>
-      </div>
-      <form onSubmit={submit} className="grid gap-4 sm:grid-cols-[1fr_10rem_auto] sm:items-end">
-        <Field label="Email">
-          <Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required disabled={workspace.role !== "admin"} />
-        </Field>
-        <Field label="Role">
-          <Select value={role} onValueChange={(value) => setRole(value as "admin" | "member")} disabled={workspace.role !== "admin"}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="member">Member</SelectItem>
-              <SelectItem value="admin">Admin</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Button disabled={busy || workspace.role !== "admin"}>
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
-          Add
+    <section className="rounded-lg border border-neutral-200 bg-white">
+      <div className="flex items-center justify-between border-b border-neutral-200 p-4">
+        <div>
+          <h3 className="font-semibold">Members</h3>
+          <p className="text-sm text-neutral-500">People with access to this workspace.</p>
+        </div>
+        <Button variant="secondary" onClick={loadMembers} disabled={loading}>
+          <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+          Refresh
         </Button>
-      </form>
-      {workspace.role !== "admin" ? <p className="mt-4 text-sm text-neutral-500">Your current role can read documents but cannot add members.</p> : null}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[34rem] text-left text-sm">
+          <thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
+            <tr>
+              <th className="px-4 py-3 font-semibold">User</th>
+              <th className="px-4 py-3 font-semibold">Role</th>
+              <th className="px-4 py-3 font-semibold">Added</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-neutral-100">
+            {members.map((member) => (
+              <tr key={member.userId}>
+                <td className="px-4 py-3 font-medium">{member.email}</td>
+                <td className="px-4 py-3"><Badge tone={member.role === "admin" ? "blue" : "neutral"}>{member.role}</Badge></td>
+                <td className="px-4 py-3 text-neutral-600">{formatDate(member.createdAt)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {members.length === 0 ? <EmptyState icon={<Users className="h-5 w-5" />} title="No members found" text="Workspace members will appear here." /> : null}
+      <div className="border-t border-neutral-200 p-4">
+        <div className="mb-4">
+          <h4 className="font-semibold">Add member</h4>
+          <p className="text-sm text-neutral-500">Admins can add registered users to this workspace.</p>
+        </div>
+        <form onSubmit={submit} className="grid gap-4 sm:grid-cols-[1fr_10rem_auto] sm:items-end">
+          <Field label="Email">
+            <Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required disabled={workspace.role !== "admin"} />
+          </Field>
+          <Field label="Role">
+            <Select value={role} onValueChange={(value) => setRole(value as "admin" | "member")} disabled={workspace.role !== "admin"}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="member">Member</SelectItem>
+                <SelectItem value="admin">Admin</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Button disabled={busy || workspace.role !== "admin"}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
+            Add
+          </Button>
+        </form>
+        {workspace.role !== "admin" ? <p className="mt-4 text-sm text-neutral-500">Your current role can read documents but cannot add members.</p> : null}
+      </div>
     </section>
   );
 }

@@ -2,6 +2,7 @@ import { Request, Router, RequestHandler } from "express";
 import multer from "multer";
 import { Readable } from "stream";
 import { createHash } from "crypto";
+import { z } from "zod";
 import { prisma } from "@archive/db";
 import { blobExists, getBlob, putBlob } from "@archive/storage";
 import { NotFoundError, ValidationError } from "../middleware/errorHandler";
@@ -204,6 +205,7 @@ router.get("/", async (req, res) => {
   const documents = await prisma.document.findMany({
     where: {
       workspaceId: req.membership!.workspaceId,
+      archivedAt: null,
     },
     include: {
       versions: {
@@ -346,6 +348,11 @@ router.get("/search", async (req, res) => {
     where: {
       workspaceId: req.membership!.workspaceId,
       status: "indexed",
+      version: {
+        document: {
+          archivedAt: null,
+        },
+      },
       plainText: {
         contains: query,
         mode: "insensitive",
@@ -398,6 +405,128 @@ router.get("/search", async (req, res) => {
 
 // --- Get document detail ---
 
+const renameDocumentSchema = z.object({
+  title: z.string().trim().min(1, "Document title is required").max(200, "Document title too long"),
+});
+
+// --- Rename document ---
+
+router.patch("/:documentId", async (req, res) => {
+  const documentId = getRouteParam(req, "documentId");
+  const parsed = renameDocumentSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    throw new ValidationError(parsed.error.issues[0].message);
+  }
+
+  const existing = await prisma.document.findFirst({
+    where: {
+      id: documentId,
+      workspaceId: req.membership!.workspaceId,
+      archivedAt: null,
+    },
+    select: { id: true, workspaceId: true, title: true, createdAt: true },
+  });
+
+  if (!existing) {
+    throw new NotFoundError("Document not found");
+  }
+
+  const audit = auditRequestMetadata(req);
+  const document = await prisma.$transaction(async (tx) => {
+    const updated = await tx.document.update({
+      where: { id: existing.id },
+      data: { title: parsed.data.title },
+      select: { id: true, workspaceId: true, title: true, createdAt: true },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        workspaceId: req.membership!.workspaceId,
+        actorId: req.user!.id,
+        action: "document.renamed",
+        entityType: "document",
+        entityId: updated.id,
+        ip: audit.ip,
+        userAgent: audit.userAgent,
+        metadata: {
+          previousTitle: existing.title,
+          title: updated.title,
+        },
+      },
+    });
+
+    return updated;
+  });
+
+  res.json({
+    ok: true,
+    data: {
+      document: {
+        id: document.id,
+        workspaceId: document.workspaceId,
+        title: document.title,
+        createdAt: document.createdAt.toISOString(),
+      },
+    },
+  });
+});
+
+// --- Archive document ---
+
+router.delete("/:documentId", async (req, res) => {
+  const documentId = getRouteParam(req, "documentId");
+
+  const existing = await prisma.document.findFirst({
+    where: {
+      id: documentId,
+      workspaceId: req.membership!.workspaceId,
+      archivedAt: null,
+    },
+    select: { id: true, title: true },
+  });
+
+  if (!existing) {
+    throw new NotFoundError("Document not found");
+  }
+
+  const audit = auditRequestMetadata(req);
+  const archivedAt = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    await tx.document.update({
+      where: { id: existing.id },
+      data: { archivedAt },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        workspaceId: req.membership!.workspaceId,
+        actorId: req.user!.id,
+        action: "document.archived",
+        entityType: "document",
+        entityId: existing.id,
+        ip: audit.ip,
+        userAgent: audit.userAgent,
+        metadata: {
+          title: existing.title,
+          archivedAt: archivedAt.toISOString(),
+        },
+      },
+    });
+  });
+
+  res.json({
+    ok: true,
+    data: {
+      document: {
+        id: existing.id,
+        archivedAt: archivedAt.toISOString(),
+      },
+    },
+  });
+});
+
 router.get("/:documentId", async (req, res) => {
   const documentId = getRouteParam(req, "documentId");
 
@@ -405,6 +534,7 @@ router.get("/:documentId", async (req, res) => {
     where: {
       id: documentId,
       workspaceId: req.membership!.workspaceId,
+      archivedAt: null,
     },
     include: {
       versions: {
@@ -453,6 +583,7 @@ router.post("/:documentId/versions", uploadSingleFile, async (req, res) => {
       where: {
         id: documentId,
         workspaceId: req.membership!.workspaceId,
+        archivedAt: null,
       },
       select: { id: true, workspaceId: true, title: true, createdAt: true },
     });
@@ -546,6 +677,9 @@ router.get("/:documentId/versions/:version/download", async (req, res) => {
       documentId,
       workspaceId: req.membership!.workspaceId,
       version: requestedVersion,
+      document: {
+        archivedAt: null,
+      },
     },
     include: {
       document: {

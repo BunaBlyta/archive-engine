@@ -22,6 +22,13 @@ export type Workspace = {
   createdAt: string;
 };
 
+export type WorkspaceMember = {
+  userId: string;
+  email: string;
+  role: "admin" | "member";
+  createdAt: string;
+};
+
 export type SearchStatus = {
   status: string;
   indexedAt: string;
@@ -44,6 +51,7 @@ export type ArchiveDocument = {
   workspaceId: string;
   title: string;
   createdAt: string;
+  archivedAt?: string | null;
   latestVersion?: DocumentVersion | null;
   versions?: DocumentVersion[];
 };
