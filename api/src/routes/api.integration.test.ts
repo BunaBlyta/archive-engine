@@ -41,6 +41,31 @@ async function createWorkspace(accessToken: string, name: string) {
   return workspaceId;
 }
 
+async function uploadDocument(
+  accessToken: string,
+  workspaceId: string,
+  title: string,
+  content: Buffer,
+  filename: string,
+  contentType: string
+) {
+  const response = await request(app)
+    .post(`/v1/workspaces/${workspaceId}/documents`)
+    .set("Authorization", `Bearer ${accessToken}`)
+    .field("title", title)
+    .attach("file", content, {
+      filename,
+      contentType,
+    })
+    .expect(201);
+
+  createdBlobHashes.push(response.body.data.version.sha256 as string);
+  return response.body.data as {
+    document: { id: string; title: string };
+    version: { id: string; version: number; sha256: string };
+  };
+}
+
 afterAll(async () => {
   if (createdWorkspaceIds.length > 0) {
     await prisma.workspace.deleteMany({
@@ -303,6 +328,340 @@ describe("API integration", () => {
         }),
       ])
     );
+  });
+
+  it("supports the full plain-text proposed change workflow", async () => {
+    const owner = await registerUser(`${runId}-governance-owner@example.com`);
+    const workspaceId = await createWorkspace(owner.accessToken, `${runId} Governance Workspace`);
+    const baseText = `${runId} Policy\nFirst rule\nSecond rule\n`;
+    const approvedText = `${runId} Policy\nFirst rule\nSecond rule revised\nThird rule\n`;
+
+    const upload = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "Policy Document",
+      Buffer.from(baseText),
+      "policy.txt",
+      "text/plain"
+    );
+    const documentId = upload.document.id;
+
+    const draftResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/drafts`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(201);
+
+    const draftId = draftResponse.body.data.draft.id as string;
+    expect(draftResponse.body.data.draft).toEqual(
+      expect.objectContaining({
+        documentId,
+        baseVersionId: upload.version.id,
+        title: "Policy Document",
+        content: baseText,
+        status: "draft",
+      })
+    );
+
+    const updatedDraftResponse = await request(app)
+      .patch(`/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({
+        content: approvedText,
+      })
+      .expect(200);
+
+    expect(updatedDraftResponse.body.data.draft.content).toBe(approvedText);
+
+    await request(app)
+      .patch(`/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({
+        title: "Renamed Draft",
+        content: approvedText,
+      })
+      .expect(400);
+
+    const proposeResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}/propose`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({ summary: "Revise the second rule and add a third." })
+      .expect(201);
+
+    const proposedChangeId = proposeResponse.body.data.proposedChange.id as string;
+    expect(proposeResponse.body.data.proposedChange).toEqual(
+      expect.objectContaining({
+        documentId,
+        draftId,
+        status: "open",
+      })
+    );
+
+    await request(app)
+      .patch(`/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({
+        content: `${approvedText}Late edit\n`,
+      })
+      .expect(400);
+
+    const proposedDetailResponse = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(proposedDetailResponse.body.data.baseContent).toBe(baseText);
+    expect(proposedDetailResponse.body.data.draftContent).toBe(approvedText);
+    expect(proposedDetailResponse.body.data.baseVersion).toEqual(
+      expect.objectContaining({
+        id: upload.version.id,
+        version: 1,
+      })
+    );
+    expect(proposedDetailResponse.body.data.diff.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "removed", text: "Second rule" }),
+        expect.objectContaining({ type: "added", text: "Second rule revised" }),
+        expect.objectContaining({ type: "added", text: "Third rule" }),
+      ])
+    );
+
+    await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/publish`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(400);
+
+    const commentedReviewResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/reviews`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({
+        state: "commented",
+        body: "Leaving context without changing the decision.",
+      })
+      .expect(201);
+
+    expect(commentedReviewResponse.body.data).toEqual(
+      expect.objectContaining({
+        proposedChangeStatus: "open",
+        review: expect.objectContaining({
+          state: "commented",
+        }),
+      })
+    );
+
+    const changesRequestedReviewResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/reviews`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({
+        state: "changes_requested",
+        body: "Please verify the new third rule.",
+      })
+      .expect(201);
+
+    expect(changesRequestedReviewResponse.body.data).toEqual(
+      expect.objectContaining({
+        proposedChangeStatus: "changes_requested",
+        review: expect.objectContaining({
+          state: "changes_requested",
+        }),
+      })
+    );
+
+    await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/publish`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(400);
+
+    const reviewResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/reviews`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({
+        state: "approved",
+        body: "Approved for publishing.",
+      })
+      .expect(201);
+
+    expect(reviewResponse.body.data).toEqual(
+      expect.objectContaining({
+        proposedChangeStatus: "approved",
+        review: expect.objectContaining({
+          state: "approved",
+          body: "Approved for publishing.",
+        }),
+      })
+    );
+
+    const publishResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/publish`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(201);
+
+    const publishedVersion = publishResponse.body.data.version;
+    createdBlobHashes.push(publishedVersion.sha256 as string);
+    expect(publishedVersion).toEqual(
+      expect.objectContaining({
+        version: 2,
+        mimeType: "text/plain",
+        originalFilename: "policy-document-v2.txt",
+      })
+    );
+
+    await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/publish`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(400);
+
+    const detailResponse = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/${documentId}`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(detailResponse.body.data.document.versions).toHaveLength(2);
+    expect(detailResponse.body.data.document.versions[1]).toEqual(
+      expect.objectContaining({
+        id: publishedVersion.id,
+        version: 2,
+      })
+    );
+    expect(detailResponse.body.data.document.title).toBe("Policy Document");
+
+    const downloadResponse = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/${documentId}/versions/2/download`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(downloadResponse.text).toBe(approvedText);
+    expect(downloadResponse.headers["content-type"]).toContain("text/plain");
+
+    const auditLogs = await prisma.auditLog.findMany({
+      where: {
+        workspaceId,
+        action: {
+          in: [
+            "document_draft.created",
+            "proposed_change.opened",
+            "proposed_change.reviewed",
+            "proposed_change.published",
+          ],
+        },
+      },
+      select: { action: true },
+    });
+
+    expect(auditLogs.map((log) => log.action)).toEqual(
+      expect.arrayContaining([
+        "document_draft.created",
+        "proposed_change.opened",
+        "proposed_change.reviewed",
+        "proposed_change.published",
+      ])
+    );
+  });
+
+  it("rejects draft creation from a non-text latest version", async () => {
+    const owner = await registerUser(`${runId}-binary-owner@example.com`);
+    const workspaceId = await createWorkspace(owner.accessToken, `${runId} Binary Workspace`);
+    const upload = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "Binary Document",
+      Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00]),
+      "binary.pdf",
+      "application/pdf"
+    );
+
+    const response = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${upload.document.id}/drafts`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(400);
+
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("prevents non-members from accessing drafts and proposed changes", async () => {
+    const owner = await registerUser(`${runId}-access-owner@example.com`);
+    const outsider = await registerUser(`${runId}-access-outsider@example.com`);
+    const workspaceId = await createWorkspace(owner.accessToken, `${runId} Access Workspace`);
+    const upload = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "Access Document",
+      Buffer.from(`${runId} member-only text\n`),
+      "access.txt",
+      "text/plain"
+    );
+    const documentId = upload.document.id;
+
+    const draftResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/drafts`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(201);
+    const draftId = draftResponse.body.data.draft.id as string;
+
+    const proposeResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}/propose`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({ summary: "Member-only proposal" })
+      .expect(201);
+    const proposedChangeId = proposeResponse.body.data.proposedChange.id as string;
+
+    await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}`)
+      .set("Authorization", `Bearer ${outsider.accessToken}`)
+      .expect(403);
+
+    await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}`)
+      .set("Authorization", `Bearer ${outsider.accessToken}`)
+      .expect(403);
+  });
+
+  it("returns metadata when a proposed change is too large for inline diff", async () => {
+    const owner = await registerUser(`${runId}-large-diff-owner@example.com`);
+    const workspaceId = await createWorkspace(owner.accessToken, `${runId} Large Diff Workspace`);
+    const baseText = Array.from({ length: 1100 }, (_, index) => `base line ${index}`).join("\n");
+    const draftText = Array.from({ length: 1100 }, (_, index) => `draft line ${index}`).join("\n");
+    const upload = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "Large Review Document",
+      Buffer.from(baseText),
+      "large-review.txt",
+      "text/plain"
+    );
+    const documentId = upload.document.id;
+
+    const draftResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/drafts`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(201);
+    const draftId = draftResponse.body.data.draft.id as string;
+
+    await request(app)
+      .patch(`/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({ content: draftText })
+      .expect(200);
+
+    const proposeResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}/propose`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({ summary: "Large review fallback" })
+      .expect(201);
+    const proposedChangeId = proposeResponse.body.data.proposedChange.id as string;
+
+    const proposedDetailResponse = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(proposedDetailResponse.body.data.diff).toEqual({
+      type: "too_large",
+      baseLineCount: 1100,
+      draftLineCount: 1100,
+      maxCellCount: 1_000_000,
+      cellCount: 1_212_201,
+      message: "This proposed change is too large for inline line-by-line review.",
+    });
   });
 
   it("searches indexed document text and returns snippets", async () => {

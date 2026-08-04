@@ -17,6 +17,9 @@ model User {
   memberships      Membership[]
   documentsCreated Document[]        @relation("DocumentsCreated")
   versionsCreated  DocumentVersion[] @relation("VersionsCreated")
+  draftsCreated    DocumentDraft[]   @relation("DraftsCreated")
+  proposedChangesOpened ProposedChange[] @relation("ProposedChangesOpened")
+  reviews          Review[]          @relation("ReviewsCreated")
   sessions Session[]
   auditLogs        AuditLog[]
 }
@@ -48,6 +51,9 @@ model Workspace {
   memberships      Membership[]
   documents        Document[]
   documentVersions DocumentVersion[]
+  documentDrafts   DocumentDraft[]
+  proposedChanges  ProposedChange[]
+  reviews          Review[]
   documentSearches DocumentSearch[]
   auditLogs        AuditLog[]
 }
@@ -77,6 +83,8 @@ model Document {
   createdBy User?     @relation("DocumentsCreated", fields: [createdById], references: [id], onDelete: SetNull)
 
   versions DocumentVersion[]
+  drafts   DocumentDraft[]
+  proposedChanges ProposedChange[]
 
   @@index([workspaceId, archivedAt, createdAt])
 }
@@ -99,11 +107,79 @@ model DocumentVersion {
   blob      Blob           @relation(fields: [blobId], references: [id], onDelete: Restrict)
   createdBy User?          @relation("VersionsCreated", fields: [createdById], references: [id], onDelete: SetNull)
   search    DocumentSearch?
+  basedDrafts DocumentDraft[] @relation("DraftBaseVersion")
 
   @@unique([documentId, version])
   @@index([documentId])
   @@index([workspaceId, createdAt])
   @@index([sha256])
+}
+
+model DocumentDraft {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  documentId    String
+  baseVersionId String
+  title         String
+  content       String
+  // valid values: draft | proposed | published | abandoned
+  status        String   @default("draft")
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document    Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  baseVersion DocumentVersion @relation("DraftBaseVersion", fields: [baseVersionId], references: [id], onDelete: Cascade)
+  createdBy   User?           @relation("DraftsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  proposedChange ProposedChange?
+
+  @@index([workspaceId, documentId, status])
+  @@index([documentId])
+  @@index([baseVersionId])
+  @@index([createdById])
+}
+
+model ProposedChange {
+  id          String    @id @default(cuid())
+  workspaceId String
+  documentId  String
+  draftId     String    @unique
+  // valid values: open | approved | changes_requested | published | closed
+  status      String    @default("open")
+  summary     String?
+  openedById  String?
+  openedAt    DateTime  @default(now())
+  closedAt    DateTime?
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document  Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  draft     DocumentDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  openedBy  User?         @relation("ProposedChangesOpened", fields: [openedById], references: [id], onDelete: SetNull)
+  reviews   Review[]
+
+  @@index([workspaceId, documentId, status])
+  @@index([documentId])
+  @@index([openedById])
+}
+
+model Review {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  proposedChangeId String
+  reviewerId       String?
+  // valid values: approved | changes_requested | commented
+  state            String
+  body             String?
+  createdAt        DateTime @default(now())
+
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  proposedChange ProposedChange @relation(fields: [proposedChangeId], references: [id], onDelete: Cascade)
+  reviewer       User?          @relation("ReviewsCreated", fields: [reviewerId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, proposedChangeId])
+  @@index([proposedChangeId])
+  @@index([reviewerId])
 }
 
 model Blob {
