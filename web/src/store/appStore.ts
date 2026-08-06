@@ -47,7 +47,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       workspaces,
       selectedWorkspaceId: workspaces.some((workspace) => workspace.id === selectedWorkspaceId)
         ? selectedWorkspaceId
-        : workspaces[0]?.id ?? null,
+        : null,
     });
   },
 

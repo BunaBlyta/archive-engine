@@ -12,16 +12,21 @@ model User {
   id        String   @id @default(cuid())
   email     String   @unique
   password  String
+  firstName String?
+  lastName  String?
   createdAt DateTime @default(now())
 
   memberships      Membership[]
   documentsCreated Document[]        @relation("DocumentsCreated")
   versionsCreated  DocumentVersion[] @relation("VersionsCreated")
   draftsCreated    DocumentDraft[]   @relation("DraftsCreated")
-  proposedChangesOpened ProposedChange[] @relation("ProposedChangesOpened")
+  draftsProposed   DocumentDraft[]   @relation("DraftsProposed")
   reviews          Review[]          @relation("ReviewsCreated")
+  lineComments     LineComment[]     @relation("LineCommentsAuthored")
   sessions Session[]
   auditLogs        AuditLog[]
+  tasksCreated     Task[]            @relation("TasksCreated")
+  tasksAssigned    Task[]            @relation("TasksAssigned")
 }
 
 model Job {
@@ -52,16 +57,17 @@ model Workspace {
   documents        Document[]
   documentVersions DocumentVersion[]
   documentDrafts   DocumentDraft[]
-  proposedChanges  ProposedChange[]
   reviews          Review[]
+  lineComments     LineComment[]
   documentSearches DocumentSearch[]
   auditLogs        AuditLog[]
+  tasks            Task[]
 }
 
 model Membership {
   workspaceId String
   userId      String
-  role        String   @default("member")
+  role        String   @default("reviewer")
   createdAt   DateTime @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -84,7 +90,7 @@ model Document {
 
   versions DocumentVersion[]
   drafts   DocumentDraft[]
-  proposedChanges ProposedChange[]
+  tasks    Task[]
 
   @@index([workspaceId, archivedAt, createdAt])
 }
@@ -122,8 +128,18 @@ model DocumentDraft {
   baseVersionId String
   title         String
   content       String
-  // valid values: draft | proposed | published | abandoned
+  // valid values: draft | in_review | changes_requested | published | abandoned
   status        String   @default("draft")
+  contentFormat String   @default("plain")
+  editorKey     String?  @unique
+  artifactSha256 String?
+  artifactSizeBytes Int?
+  artifactMimeType String?
+  artifactOriginalFilename String?
+  summary       String?
+  proposedById  String?
+  proposedAt    DateTime?
+  closedAt      DateTime?
   createdById   String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -132,53 +148,37 @@ model DocumentDraft {
   document    Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
   baseVersion DocumentVersion @relation("DraftBaseVersion", fields: [baseVersionId], references: [id], onDelete: Cascade)
   createdBy   User?           @relation("DraftsCreated", fields: [createdById], references: [id], onDelete: SetNull)
-  proposedChange ProposedChange?
+  proposedBy  User?           @relation("DraftsProposed", fields: [proposedById], references: [id], onDelete: SetNull)
+  reviews     Review[]
+  lineComments LineComment[]
 
   @@index([workspaceId, documentId, status])
   @@index([documentId])
   @@index([baseVersionId])
   @@index([createdById])
-}
-
-model ProposedChange {
-  id          String    @id @default(cuid())
-  workspaceId String
-  documentId  String
-  draftId     String    @unique
-  // valid values: open | approved | changes_requested | published | closed
-  status      String    @default("open")
-  summary     String?
-  openedById  String?
-  openedAt    DateTime  @default(now())
-  closedAt    DateTime?
-
-  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  document  Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  draft     DocumentDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
-  openedBy  User?         @relation("ProposedChangesOpened", fields: [openedById], references: [id], onDelete: SetNull)
-  reviews   Review[]
-
-  @@index([workspaceId, documentId, status])
-  @@index([documentId])
-  @@index([openedById])
+  @@index([proposedById])
+  // Also carries the partial unique index "DocumentDraft_one_active_per_document"
+  // (documentId WHERE status IN ('draft','in_review','changes_requested')), declared in raw SQL
+  // in migrations/20260806195500_merge_proposed_change_into_draft. Prisma cannot express partial
+  // unique indexes, so `prisma db push` will not recreate it — use migrations for this table.
 }
 
 model Review {
-  id               String   @id @default(cuid())
-  workspaceId      String
-  proposedChangeId String
-  reviewerId       String?
+  id          String   @id @default(cuid())
+  workspaceId String
+  draftId     String
+  reviewerId  String?
   // valid values: approved | changes_requested | commented
-  state            String
-  body             String?
-  createdAt        DateTime @default(now())
+  state       String
+  body        String?
+  createdAt   DateTime @default(now())
 
-  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  proposedChange ProposedChange @relation(fields: [proposedChangeId], references: [id], onDelete: Cascade)
-  reviewer       User?          @relation("ReviewsCreated", fields: [reviewerId], references: [id], onDelete: SetNull)
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  draft     DocumentDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  reviewer  User?         @relation("ReviewsCreated", fields: [reviewerId], references: [id], onDelete: SetNull)
 
-  @@index([workspaceId, proposedChangeId])
-  @@index([proposedChangeId])
+  @@index([workspaceId, draftId])
+  @@index([draftId])
   @@index([reviewerId])
 }
 
@@ -196,6 +196,7 @@ model DocumentSearch {
   versionId   String   @id
   workspaceId String
   plainText   String?
+  format      String   @default("plain")
   indexedAt   DateTime @default(now())
   status      String   @default("pending")
   error       String?
@@ -224,6 +225,44 @@ model AuditLog {
   @@index([workspaceId, createdAt])
   @@index([workspaceId])
   @@index([actorId])
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  workspaceId String
+  documentId  String
+  title       String
+  assigneeId  String?
+  createdById String?
+  status      String    @default("open")
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document  Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  assignee  User?     @relation("TasksAssigned", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdBy User?     @relation("TasksCreated", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, documentId])
+  @@index([documentId])
+  @@index([assigneeId])
+}
+
+model LineComment {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  draftId       String
+  authorId      String?
+  diffLineIndex Int
+  body          String
+  createdAt     DateTime @default(now())
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  draft     DocumentDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  author    User?         @relation("LineCommentsAuthored", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, draftId])
+  @@index([draftId])
 }
 
 model Session {

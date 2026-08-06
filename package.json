@@ -9,6 +9,8 @@
     "packages/*"
   ],
   "scripts": {
+    "typecheck": "npm run typecheck -w api && npm run typecheck -w web",
+    "dev": "concurrently -n api,worker,web -c blue,magenta,green \"npm run dev:api\" \"npm run dev:worker\" \"npm run dev:web\"",
     "dev:api": "npm run dev -w api",
     "dev:worker": "npm run dev -w worker",
     "dev:web": "npm run dev -w web",
@@ -19,6 +21,7 @@
     "build:storage": "npm run build -w @archive/storage"
   },
   "devDependencies": {
+    "concurrently": "^9.2.4",
     "dotenv-cli": "^11.0.0"
   }
 }

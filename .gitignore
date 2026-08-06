@@ -7,3 +7,6 @@ packages/db/generated/
 buildLog.md
 future.md
 future.md
+
+# TypeScript incremental build artifacts
+*.tsbuildinfo

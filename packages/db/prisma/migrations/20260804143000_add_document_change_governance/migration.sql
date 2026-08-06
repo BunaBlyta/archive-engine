@@ -6,6 +6,7 @@ CREATE TABLE "DocumentDraft" (
     "baseVersionId" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "content" TEXT NOT NULL,
+    "contentFormat" TEXT NOT NULL DEFAULT 'plain',
     "status" TEXT NOT NULL DEFAULT 'draft',
     "createdById" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

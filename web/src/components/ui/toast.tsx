@@ -15,14 +15,14 @@ export function Toast({
 }: React.ComponentProps<typeof ToastPrimitive.Root>) {
   return (
     <ToastPrimitive.Root
-      className={cn("rounded-md border border-neutral-200 bg-white p-4 shadow-lg", className)}
+      className={cn("rounded-md border border-neutral-100 bg-white p-4 shadow-lg", className)}
       {...props}
     />
   );
 }
 
 export const ToastTitle = (props: React.ComponentProps<typeof ToastPrimitive.Title>) => (
-  <ToastPrimitive.Title className="text-sm font-semibold text-neutral-950" {...props} />
+  <ToastPrimitive.Title className="text-sm text-neutral-950" {...props} />
 );
 
 export const ToastDescription = (props: React.ComponentProps<typeof ToastPrimitive.Description>) => (

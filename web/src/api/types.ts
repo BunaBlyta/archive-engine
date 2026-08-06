@@ -13,19 +13,30 @@ export type ApiEnvelope<T> = {
 export type User = {
   id: string;
   email: string;
+  firstName: string | null;
+  lastName: string | null;
+};
+
+export type UserRef = {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
 };
 
 export type Workspace = {
   id: string;
   name: string;
-  role: "admin" | "member";
+  role: "admin" | "reviewer";
   createdAt: string;
 };
 
 export type WorkspaceMember = {
   userId: string;
   email: string;
-  role: "admin" | "member";
+  firstName: string | null;
+  lastName: string | null;
+  role: "admin" | "reviewer";
   createdAt: string;
 };
 
@@ -43,6 +54,7 @@ export type DocumentVersion = {
   mimeType: string;
   originalFilename: string | null;
   createdAt: string;
+  createdBy: UserRef | null;
   search: SearchStatus;
 };
 
@@ -53,13 +65,38 @@ export type DocumentDraft = {
   baseVersionId: string;
   title: string;
   content: string;
+  contentFormat: "plain" | "markdown" | string;
   status: "draft" | "proposed" | "published" | "abandoned" | string;
+  editorKey: string | null;
+  artifactSha256: string | null;
+  artifactSizeBytes: number | null;
+  artifactMimeType: string | null;
+  artifactOriginalFilename: string | null;
   createdById: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
 export type DocumentDraftMetadata = Omit<DocumentDraft, "content">;
+
+export type OnlyOfficeEditorConfig = {
+  documentServerUrl: string;
+  document: {
+    fileType: "docx";
+    key: string;
+    title: string;
+    url: string;
+    permissions: { edit: boolean; download: boolean; review: boolean };
+  };
+  documentType: "word";
+  editorConfig: {
+    mode: "edit" | "view";
+    callbackUrl?: string;
+    user?: { id: string; name: string };
+    customization: { compactHeader: boolean };
+  };
+  token: string;
+};
 
 export type ProposedChange = {
   id: string;
@@ -78,6 +115,7 @@ export type Review = {
   workspaceId: string;
   proposedChangeId: string;
   reviewerId: string | null;
+  reviewer: UserRef | null;
   state: "approved" | "changes_requested" | "commented" | string;
   body: string | null;
   createdAt: string;
@@ -94,6 +132,14 @@ export type ProposedChangeDiff =
   | { type: "line"; lines: LineDiffLine[] }
   | { type: "too_large" };
 
+export type LineComment = {
+  id: string;
+  diffLineIndex: number;
+  body: string;
+  createdAt: string;
+  author: UserRef | null;
+};
+
 export type ProposedChangeDetail = {
   proposedChange: ProposedChange;
   draft: DocumentDraftMetadata;
@@ -101,7 +147,9 @@ export type ProposedChangeDetail = {
   baseContent: string;
   draftContent: string;
   diff: ProposedChangeDiff;
+  docxHiddenChanges: string[];
   reviews: Review[];
+  comments: LineComment[];
 };
 
 export type ArchiveDocument = {
@@ -112,6 +160,29 @@ export type ArchiveDocument = {
   archivedAt?: string | null;
   latestVersion?: DocumentVersion | null;
   versions?: DocumentVersion[];
+  openProposedChange?: { id: string; status: string } | null;
+  activeDraft?: { id: string; createdById: string | null; updatedAt: string } | null;
+};
+
+export type DocumentTask = {
+  id: string;
+  documentId: string;
+  title: string;
+  status: "open" | "done" | string;
+  createdAt: string;
+  completedAt: string | null;
+  assignee: UserRef | null;
+  createdBy: UserRef | null;
+};
+
+export type WorkspaceDashboardMember = {
+  userId: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  role: "admin" | "reviewer";
+  createdAt: string;
+  contributionCount: number;
 };
 
 export type Pagination = {
@@ -137,6 +208,8 @@ export type AuditLog = {
   entityId: string;
   actorId: string | null;
   actorEmail: string | null;
+  actorFirstName: string | null;
+  actorLastName: string | null;
   ip: string | null;
   userAgent: string | null;
   metadata: unknown;

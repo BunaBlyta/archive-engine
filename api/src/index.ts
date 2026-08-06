@@ -2,6 +2,10 @@ import dotenv from "dotenv";
 
 dotenv.config({ path: `${__dirname}/../../.env` });
 
+import { assertRequiredEnv } from "./lib/env";
+
+assertRequiredEnv();
+
 import { createApp } from "./app";
 
 const PORT = process.env.PORT ?? 3000;

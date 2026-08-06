@@ -1,0 +1,10 @@
+{
+  "recordType": "sample-upload",
+  "title": "Fictional archive record",
+  "created": "2026-08-06",
+  "tags": ["demo", "upload", "test"],
+  "owner": {
+    "name": "Sample Team",
+    "email": "team@example.test"
+  }
+}

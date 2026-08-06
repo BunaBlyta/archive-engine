@@ -1,0 +1,14 @@
+Team Sync — August 6, 2026
+
+Attendees: Mira, Luka, Noor, and Sam
+
+Decisions
+- Keep the archive review window at two business days.
+- Add an owner to every document task.
+- Use the document title as the default download name.
+
+Open questions
+- Should archived documents remain searchable?
+- Do reviewers need an email notification when a change is proposed?
+
+Next meeting: August 13, 2026

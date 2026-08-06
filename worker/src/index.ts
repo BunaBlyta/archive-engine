@@ -4,6 +4,10 @@ dotenv.config({ path: `${__dirname}/../../.env` });
 
 import { prisma } from "@archive/db";
 import { getBlob } from "@archive/storage";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const mammoth = require("mammoth") as {
+  convertToMarkdown: (input: { buffer: Buffer }) => Promise<{ value: string }>;
+};
 import { PDFParse } from "pdf-parse";
 import { Readable } from "stream";
 
@@ -90,7 +94,7 @@ async function runJob(job: {
     // pretend work
     await prisma.job.update({
       where: { id: job.id },
-      data: { status: "succeeded" },
+      data: { status: "succeeded", lockedAt: null, lockedBy: null },
     });
     return;
   }
@@ -99,19 +103,12 @@ async function runJob(job: {
     await indexDocumentVersion(job.payload);
     await prisma.job.update({
       where: { id: job.id },
-      data: { status: "succeeded" },
+      data: { status: "succeeded", lockedAt: null, lockedBy: null },
     });
     return;
   }
 
-  // Unknown job type
-  await prisma.job.update({
-    where: { id: job.id },
-    data: {
-      status: "failed",
-      lastError: `Unknown job type: ${job.type}`,
-    },
-  });
+  throw new Error(`Unknown job type: ${job.type}`);
 }
 
 function parseIndexDocumentVersionPayload(payload: unknown): IndexDocumentVersionPayload {
@@ -160,6 +157,10 @@ function isPdfMimeType(mimeType: string) {
   return mimeType === "application/pdf";
 }
 
+function isWordMimeType(mimeType: string) {
+  return mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+}
+
 async function extractPdfText(buffer: Buffer): Promise<string> {
   const parser = new PDFParse({ data: buffer });
 
@@ -171,15 +172,90 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
   }
 }
 
-async function extractPlainText(version: { sha256: string; mimeType: string }) {
+// Heuristic structure detection on extracted PDF text.
+// Returns markdown text if structure is detected, or null for plain.
+function detectAndConvertPdfStructure(text: string): string | null {
+  const lines = text.split("\n");
+  let headingCount = 0;
+  let bulletCount = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    if (/^[•\-*]\s+\S/.test(line) || /^\d+\.\s+\S/.test(line)) {
+      bulletCount++;
+      continue;
+    }
+
+    // Heading: short, no ending sentence punctuation, surrounded by blank lines
+    const prevBlank = i === 0 || !lines[i - 1].trim();
+    const nextBlank = i === lines.length - 1 || !lines[i + 1].trim();
+    if (line.length < 80 && !/[.,:;]$/.test(line) && prevBlank && nextBlank) {
+      headingCount++;
+    }
+  }
+
+  if (headingCount < 2 && bulletCount < 3) {
+    return null; // no meaningful structure — stay plain
+  }
+
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+
+    if (!line) {
+      out.push("");
+      continue;
+    }
+
+    // Normalize bullet markers to markdown
+    if (/^•\s+/.test(line)) {
+      out.push(line.replace(/^•\s+/, "- "));
+      continue;
+    }
+    if (/^[*\-]\s+\S/.test(line) || /^\d+\.\s+\S/.test(line)) {
+      out.push(line);
+      continue;
+    }
+
+    // Heading
+    const prevBlank = i === 0 || !lines[i - 1].trim();
+    const nextBlank = i === lines.length - 1 || !lines[i + 1].trim();
+    if (line.length < 80 && !/[.,:;]$/.test(line) && prevBlank && nextBlank) {
+      out.push(`## ${line}`);
+      continue;
+    }
+
+    out.push(line);
+  }
+
+  return out.join("\n");
+}
+
+type ExtractionResult = { plainText: string; format: "plain" | "markdown" };
+
+async function extractContent(version: { sha256: string; mimeType: string }): Promise<ExtractionResult | null> {
   const stream = await getBlob(version.sha256);
 
   if (isTextMimeType(version.mimeType)) {
-    return streamToString(stream);
+    return { plainText: await streamToString(stream), format: "plain" };
+  }
+
+  if (isWordMimeType(version.mimeType)) {
+    const buffer = await streamToBuffer(stream);
+    const result = await mammoth.convertToMarkdown({ buffer });
+    return { plainText: result.value, format: "markdown" };
   }
 
   if (isPdfMimeType(version.mimeType)) {
-    return extractPdfText(await streamToBuffer(stream));
+    const buffer = await streamToBuffer(stream);
+    const rawText = await extractPdfText(buffer);
+    const markdown = detectAndConvertPdfStructure(rawText);
+    if (markdown !== null) {
+      return { plainText: markdown, format: "markdown" };
+    }
+    return { plainText: rawText, format: "plain" };
   }
 
   return null;
@@ -226,13 +302,15 @@ async function markSearchFailed(
 
 async function markSearchIndexed(
   version: { id: string; workspaceId: string },
-  plainText: string
+  plainText: string,
+  format: "plain" | "markdown"
 ) {
   await prisma.documentSearch.upsert({
     where: { versionId: version.id },
     update: {
       status: "indexed",
       plainText,
+      format,
       error: null,
     },
     create: {
@@ -240,6 +318,7 @@ async function markSearchIndexed(
       workspaceId: version.workspaceId,
       status: "indexed",
       plainText,
+      format,
       error: null,
     },
   });
@@ -268,20 +347,20 @@ async function indexDocumentVersion(payload: unknown) {
     throw new Error(`Document version not found: ${versionId}`);
   }
 
-  if (!isTextMimeType(version.mimeType) && !isPdfMimeType(version.mimeType)) {
+  if (!isTextMimeType(version.mimeType) && !isPdfMimeType(version.mimeType) && !isWordMimeType(version.mimeType)) {
     await markSearchUnsupported(version);
     return;
   }
 
   try {
-    const plainText = await extractPlainText(version);
+    const result = await extractContent(version);
 
-    if (plainText === null) {
+    if (result === null) {
       await markSearchUnsupported(version);
       return;
     }
 
-    await markSearchIndexed(version, plainText);
+    await markSearchIndexed(version, result.plainText, result.format);
   } catch (e: unknown) {
     await markSearchFailed(version, toErrorMessage(e));
   }
@@ -323,10 +402,14 @@ async function loop() {
       const message = toErrorMessage(e);
       console.error("Job failed", job.id, message);
       const isDead = job.attempts >= job.maxAttempts;
+      const retryDelayMs = Math.min(2 ** Math.max(job.attempts - 1, 0) * 1000, 5 * 60 * 1000);
       await prisma.job.update({
         where: { id: job.id },
         data: {
-          status: isDead ? "dead" : "failed",
+          status: isDead ? "dead" : "queued",
+          runAt: isDead ? undefined : new Date(Date.now() + retryDelayMs),
+          lockedAt: null,
+          lockedBy: null,
           lastError: message,
         },
       });

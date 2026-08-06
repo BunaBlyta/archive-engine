@@ -3,14 +3,18 @@ import type {
   ArchiveDocument,
   AuditLog,
   DocumentDraft,
+  DocumentTask,
   DocumentVersion,
+  LineComment,
   Pagination,
   ProposedChange,
   ProposedChangeDetail,
+  OnlyOfficeEditorConfig,
   Review,
   SearchResult,
   User,
   Workspace,
+  WorkspaceDashboardMember,
   WorkspaceMember,
 } from "./types";
 
@@ -62,10 +66,10 @@ async function apiRequest<T>(
 }
 
 export const api = {
-  register(email: string, password: string) {
+  register(email: string, password: string, firstName: string, lastName: string) {
     return apiRequest<{ accessToken: string; user: User }>("/v1/auth/register", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, firstName, lastName }),
     });
   },
 
@@ -99,7 +103,7 @@ export const api = {
     }, token);
   },
 
-  addMember(token: string, workspaceId: string, email: string, role: "admin" | "member") {
+  addMember(token: string, workspaceId: string, email: string, role: "admin" | "reviewer") {
     return apiRequest<{ member: { userId: string; email: string; role: string; createdAt: string } }>(
       `/v1/workspaces/${workspaceId}/members`,
       {
@@ -146,17 +150,6 @@ export const api = {
     );
   },
 
-  uploadVersion(token: string, workspaceId: string, documentId: string, file: File) {
-    const form = new FormData();
-    form.set("file", file);
-
-    return apiRequest<{ document: ArchiveDocument }>(
-      `/v1/workspaces/${workspaceId}/documents/${documentId}/versions`,
-      { method: "POST", body: form },
-      token
-    );
-  },
-
   renameDocument(token: string, workspaceId: string, documentId: string, title: string) {
     return apiRequest<{ document: ArchiveDocument }>(
       `/v1/workspaces/${workspaceId}/documents/${documentId}`,
@@ -184,6 +177,22 @@ export const api = {
     );
   },
 
+  getDraft(token: string, workspaceId: string, documentId: string, draftId: string) {
+    return apiRequest<{ draft: DocumentDraft }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}`,
+      {},
+      token
+    );
+  },
+
+  discardDraft(token: string, workspaceId: string, documentId: string, draftId: string) {
+    return apiRequest<{ draft: DocumentDraft }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}/discard`,
+      { method: "POST" },
+      token
+    );
+  },
+
   updateDraftContent(token: string, workspaceId: string, documentId: string, draftId: string, content: string) {
     return apiRequest<{ draft: DocumentDraft }>(
       `/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}`,
@@ -191,6 +200,22 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify({ content }),
       },
+      token
+    );
+  },
+
+  getDraftEditorConfig(token: string, workspaceId: string, documentId: string, draftId: string) {
+    return apiRequest<{ editor: OnlyOfficeEditorConfig }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}/editor-config`,
+      {},
+      token
+    );
+  },
+
+  forceSaveDraftEditor(token: string, workspaceId: string, documentId: string, draftId: string) {
+    return apiRequest<{ requested: boolean }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}/editor/force-save`,
+      { method: "POST" },
       token
     );
   },
@@ -222,7 +247,7 @@ export const api = {
     state: "approved" | "changes_requested" | "commented",
     body?: string
   ) {
-    return apiRequest<{ review: Review; proposedChangeStatus: string }>(
+    return apiRequest<{ review: Review; proposedChangeStatus: string; version: DocumentVersion | null }>(
       `/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/reviews`,
       {
         method: "POST",
@@ -232,9 +257,24 @@ export const api = {
     );
   },
 
-  publishProposedChange(token: string, workspaceId: string, documentId: string, proposedChangeId: string) {
-    return apiRequest<{ version: DocumentVersion }>(
-      `/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/publish`,
+  createLineComment(
+    token: string,
+    workspaceId: string,
+    documentId: string,
+    proposedChangeId: string,
+    diffLineIndex: number,
+    body: string
+  ) {
+    return apiRequest<{ comment: LineComment }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/comments`,
+      { method: "POST", body: JSON.stringify({ diffLineIndex, body }) },
+      token
+    );
+  },
+
+  abandonProposedChange(token: string, workspaceId: string, documentId: string, proposedChangeId: string) {
+    return apiRequest<{ proposedChange: ProposedChange }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/abandon`,
       { method: "POST" },
       token
     );
@@ -254,6 +294,38 @@ export const api = {
     );
   },
 
+  listTasks(token: string, workspaceId: string, documentId: string) {
+    return apiRequest<{ tasks: DocumentTask[] }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/tasks`,
+      {},
+      token
+    );
+  },
+
+  createTask(token: string, workspaceId: string, documentId: string, title: string, assigneeId: string) {
+    return apiRequest<{ task: DocumentTask }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/tasks`,
+      { method: "POST", body: JSON.stringify({ title, assigneeId }) },
+      token
+    );
+  },
+
+  completeTask(token: string, workspaceId: string, documentId: string, taskId: string) {
+    return apiRequest<{ task: DocumentTask }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/tasks/${taskId}`,
+      { method: "PATCH", body: JSON.stringify({ status: "done" }) },
+      token
+    );
+  },
+
+  getDashboard(token: string, workspaceId: string) {
+    return apiRequest<{ members: WorkspaceDashboardMember[] }>(
+      `/v1/workspaces/${workspaceId}/dashboard`,
+      {},
+      token
+    );
+  },
+
   listAuditLogs(token: string, workspaceId: string, offset = 0, limit = 25) {
     return apiRequest<{ pagination: Pagination; auditLogs: AuditLog[] }>(
       `/v1/workspaces/${workspaceId}/audit-logs?limit=${limit}&offset=${offset}`,
@@ -266,8 +338,56 @@ export const api = {
     return `${API_BASE_URL}/v1/workspaces/${workspaceId}/documents/${documentId}/versions/${version}/download`;
   },
 
+  previewUrl(workspaceId: string, documentId: string, version: number) {
+    return `${API_BASE_URL}/v1/workspaces/${workspaceId}/documents/${documentId}/versions/${version}/preview`;
+  },
+
+  async getVersionEditorConfig(token: string, workspaceId: string, documentId: string, version: number) {
+    return apiRequest<{ editor: OnlyOfficeEditorConfig }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/versions/${version}/editor-config`,
+      {},
+      token
+    );
+  },
+
+  async exportVersionAsPdf(token: string, workspaceId: string, documentId: string, version: number) {
+    const response = await fetch(
+      `${API_BASE_URL}/v1/workspaces/${workspaceId}/documents/${documentId}/versions/${version}/export-pdf`,
+      { headers: { Authorization: `Bearer ${token}` }, credentials: "include" }
+    );
+
+    if (!response.ok) {
+      await parseResponse<never>(response);
+    }
+
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const filename = disposition.match(/filename="([^"]+)"/)?.[1] ?? `document-v${version}.pdf`;
+    const blob = await response.blob();
+
+    return { blob, filename };
+  },
+
   async downloadVersion(token: string, workspaceId: string, documentId: string, version: number) {
     const response = await fetch(api.downloadUrl(workspaceId, documentId, version), {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      await parseResponse<never>(response);
+    }
+
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const filename = disposition.match(/filename="([^"]+)"/)?.[1] ?? `document-v${version}`;
+    const blob = await response.blob();
+
+    return { blob, filename };
+  },
+
+  async previewVersion(token: string, workspaceId: string, documentId: string, version: number) {
+    const response = await fetch(api.previewUrl(workspaceId, documentId, version), {
       headers: {
         Authorization: `Bearer ${token}`,
       },

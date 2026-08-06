@@ -62,7 +62,35 @@ export function errorHandler(
     return;
   }
 
-logger.error({ err, requestId: req.id }, "Unhandled error");
+  if (isRequestBodyError(err)) {
+    const tooLarge = err.type === "entity.too.large";
+    res.status(tooLarge ? 413 : 400).json({
+      ok: false,
+      error: {
+        code: tooLarge ? "PAYLOAD_TOO_LARGE" : "INVALID_REQUEST_BODY",
+        message: tooLarge ? "Request body is too large" : "Request body must be valid JSON",
+        requestId: req.id,
+      },
+    });
+    return;
+  }
+
+  // Unique-constraint violations are races that lost, not server faults — the database-level
+  // guards (one active proposal per document, one version number per document) land here.
+  if (isUniqueConstraintError(err)) {
+    logger.warn({ err, requestId: req.id }, "Unique constraint violation");
+    res.status(409).json({
+      ok: false,
+      error: {
+        code: "CONFLICT",
+        message: "This change conflicts with another change that was just saved. Reload and try again.",
+        requestId: req.id,
+      },
+    });
+    return;
+  }
+
+  logger.error({ err, requestId: req.id }, "Unhandled error");
 
   res.status(500).json({
     ok: false,
@@ -72,4 +100,15 @@ logger.error({ err, requestId: req.id }, "Unhandled error");
       requestId: req.id,
     },
   });
+}
+
+function isUniqueConstraintError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  return (err as { code?: unknown }).code === "P2002";
+}
+
+function isRequestBodyError(err: unknown): err is { type: string } {
+  if (!err || typeof err !== "object") return false;
+  const candidate = err as { type?: unknown };
+  return candidate.type === "entity.too.large" || candidate.type === "entity.parse.failed";
 }

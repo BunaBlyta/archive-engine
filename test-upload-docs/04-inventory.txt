@@ -1,0 +1,17 @@
+Sample inventory
+================
+
+Item: Blue binder
+Quantity: 4
+Location: Shelf A2
+Condition: Good
+
+Item: Red folder
+Quantity: 12
+Location: Shelf B1
+Condition: Needs labeling
+
+Item: Blank index cards
+Quantity: 250
+Location: Supply cabinet
+Condition: New

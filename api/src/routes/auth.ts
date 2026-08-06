@@ -13,6 +13,7 @@ import {
   UnauthorizedError,
   ValidationError,
 } from "../middleware/errorHandler";
+import { formatUserRef } from "../lib/userDisplay";
 const router = Router();
 
 // --- Register ---
@@ -20,6 +21,8 @@ const router = Router();
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
   password: z.string().min(8, "Password must be at least 8 characters"),
+  firstName: z.string().trim().min(1, "First name is required"),
+  lastName: z.string().trim().min(1, "Last name is required"),
 });
 
 router.post("/register", async (req, res) => {
@@ -29,7 +32,7 @@ router.post("/register", async (req, res) => {
     throw new ValidationError(parsed.error.issues[0].message);
   }
 
-  const { email, password } = parsed.data;
+  const { email, password, firstName, lastName } = parsed.data;
 
   const existing = await prisma.user.findUnique({ where: { email } });
 
@@ -43,6 +46,8 @@ router.post("/register", async (req, res) => {
     data: {
       email,
       password: hashedPassword,
+      firstName,
+      lastName,
     },
   });
 
@@ -71,7 +76,7 @@ router.post("/register", async (req, res) => {
     ok: true,
     data: {
       accessToken,
-      user: { id: user.id, email: user.email },
+      user: formatUserRef(user),
     },
   });
 });
@@ -129,7 +134,7 @@ router.post("/login", async (req, res) => {
     ok: true,
     data: {
       accessToken,
-      user: { id: user.id, email: user.email },
+      user: formatUserRef(user),
     },
   });
 });

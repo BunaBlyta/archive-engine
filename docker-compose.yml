@@ -26,6 +26,16 @@ services:
       - minio_data:/data
     command: server /data --console-address ":9001"
 
+  documentserver:
+    image: onlyoffice/documentserver:latest
+    container_name: archive-onlyoffice
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:?ONLYOFFICE_JWT_SECRET must be set}
+
 volumes:
   pgdata:
   minio_data:

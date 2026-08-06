@@ -10,7 +10,9 @@
     "@archive/db": "*",
     "@archive/storage": "*",
     "dotenv": "^16.4.5",
-    "pdf-parse": "^2.4.5"
+    "mammoth": "^1.12.0",
+    "pdf-parse": "^2.4.5",
+    "pdfjs-dist": "^5.6.205"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",

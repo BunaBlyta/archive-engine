@@ -126,6 +126,8 @@ router.get("/:workspaceId/audit-logs", requireMembership, async (req, res) => {
       actor: {
         select: {
           email: true,
+          firstName: true,
+          lastName: true,
         },
       },
     },
@@ -146,6 +148,8 @@ router.get("/:workspaceId/audit-logs", requireMembership, async (req, res) => {
         entityId: log.entityId,
         actorId: log.actorId,
         actorEmail: log.actor?.email ?? null,
+        actorFirstName: log.actor?.firstName ?? null,
+        actorLastName: log.actor?.lastName ?? null,
         ip: log.ip,
         userAgent: log.userAgent,
         metadata: log.metadata,
@@ -169,6 +173,8 @@ router.get("/:workspaceId/members", requireMembership, async (req, res) => {
         select: {
           id: true,
           email: true,
+          firstName: true,
+          lastName: true,
         },
       },
     },
@@ -184,6 +190,8 @@ router.get("/:workspaceId/members", requireMembership, async (req, res) => {
       members: members.map((member) => ({
         userId: member.user.id,
         email: member.user.email,
+        firstName: member.user.firstName,
+        lastName: member.user.lastName,
         role: member.role,
         createdAt: member.createdAt.toISOString(),
       })),
@@ -195,7 +203,7 @@ router.get("/:workspaceId/members", requireMembership, async (req, res) => {
 
 const addMemberSchema = z.object({
   email: z.string().email("Invalid email address"),
-  role: z.enum(["member", "admin"]).default("member"),
+  role: z.enum(["reviewer", "admin"]).default("reviewer"),
 });
 
 router.post("/:workspaceId/members", requireMembership, async (req, res) => {
@@ -213,7 +221,7 @@ router.post("/:workspaceId/members", requireMembership, async (req, res) => {
 
   const user = await prisma.user.findUnique({
     where: { email },
-    select: { id: true, email: true },
+    select: { id: true, email: true, firstName: true, lastName: true },
   });
 
   if (!user) {
@@ -272,9 +280,51 @@ router.post("/:workspaceId/members", requireMembership, async (req, res) => {
       member: {
         userId: membership.userId,
         email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
         role: membership.role,
         createdAt: membership.createdAt.toISOString(),
       },
+    },
+  });
+});
+
+// --- Workspace dashboard ---
+
+router.get("/:workspaceId/dashboard", requireMembership, async (req, res) => {
+  const workspaceId = req.membership!.workspaceId;
+
+  const [members, contributionGroups] = await Promise.all([
+    prisma.membership.findMany({
+      where: { workspaceId },
+      include: {
+        user: { select: { id: true, email: true, firstName: true, lastName: true } },
+      },
+      orderBy: [{ role: "asc" }, { createdAt: "asc" }],
+    }),
+    prisma.documentDraft.groupBy({
+      by: ["proposedById"],
+      where: { workspaceId, proposedById: { not: null } },
+      _count: { id: true },
+    }),
+  ]);
+
+  const countByUserId = new Map(
+    contributionGroups.map((g) => [g.proposedById, g._count.id])
+  );
+
+  res.json({
+    ok: true,
+    data: {
+      members: members.map((m) => ({
+        userId: m.user.id,
+        email: m.user.email,
+        firstName: m.user.firstName,
+        lastName: m.user.lastName,
+        role: m.role,
+        createdAt: m.createdAt.toISOString(),
+        contributionCount: countByUserId.get(m.user.id) ?? 0,
+      })),
     },
   });
 });

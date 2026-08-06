@@ -21,7 +21,7 @@ export async function requireMembership(req: Request, _res: Response, next: Next
   req.membership = {
     workspaceId: membership.workspaceId,
     userId: membership.userId,
-    role: membership.role as "admin" | "member",
+    role: membership.role as "admin" | "reviewer",
   };
 
   next();
