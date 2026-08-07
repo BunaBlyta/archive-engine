@@ -185,6 +185,14 @@ export const api = {
     );
   },
 
+  withdrawProposedChange(token: string, workspaceId: string, documentId: string, proposedChangeId: string) {
+    return apiRequest<{ draft: DocumentDraft }>(
+      `/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/withdraw`,
+      { method: "POST" },
+      token
+    );
+  },
+
   discardDraft(token: string, workspaceId: string, documentId: string, draftId: string) {
     return apiRequest<{ draft: DocumentDraft }>(
       `/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}/discard`,

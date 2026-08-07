@@ -12,6 +12,7 @@ import {
   Maximize2,
   Pencil,
   Trash2,
+  Undo2,
   FilePlus2,
   FileText,
   History,
@@ -113,7 +114,8 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   "proposed_change.commented": "Change commented",
   "proposed_change.reviewed": "Change reviewed",
   "proposed_change.published": "Change published",
-  "proposed_change.abandoned": "Change withdrawn",
+  "proposed_change.abandoned": "Proposal discarded",
+  "proposed_change.withdrawn": "Proposal withdrawn to draft",
 };
 
 function auditActionLabel(action: string) {
@@ -1401,7 +1403,7 @@ function DocumentFocusView({
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [editorConfig, setEditorConfig] = useState<OnlyOfficeEditorConfig | null>(null);
-  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [discardProposalOpen, setDiscardProposalOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [tasks, setTasks] = useState<DocumentTask[]>([]);
@@ -1664,17 +1666,37 @@ function DocumentFocusView({
     }
   }
 
-  async function abandon() {
+  // The authorship counterpart to a reviewer's "request changes": back to an editable draft
+  // with no review recorded. Distinct from abandon, which closes the proposal for good.
+  async function returnToDraft() {
     if (!detail) return;
     setBusy(true);
     setBusyLabel("Withdrawing");
     try {
+      const data = await api.withdrawProposedChange(token, workspace.id, doc.id, detail.proposedChange.id);
+      setDetail(null);
+      await onChanged();
+      await loadDraftForEditing(data.draft);
+      onNotice({ title: "Withdrawn to draft", description: "Edit and propose it again when you're ready." });
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+    }
+  }
+
+  async function abandon() {
+    if (!detail) return;
+    setBusy(true);
+    setBusyLabel("Discarding proposal");
+    try {
       await api.abandonProposedChange(token, workspace.id, doc.id, detail.proposedChange.id);
       await onChanged();
-      setWithdrawOpen(false);
+      setDiscardProposalOpen(false);
       setMode("versions");
       setDetail(null);
-      onNotice({ title: "Proposed change withdrawn" });
+      onNotice({ title: "Proposal discarded" });
     } catch (error) {
       onError(errorMessage(error));
     } finally {
@@ -1789,7 +1811,23 @@ function DocumentFocusView({
                       Revise
                     </Button>
                   ) : null}
-                  {!isPublished ? (
+                  {isOwnProposal && !isPublished ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => void returnToDraft()}
+                      disabled={busy}
+                      title="Take this back out of review so you can keep editing. Comments and reviews are kept, and you can propose it again."
+                    >
+                      {busy && busyLabel === "Withdrawing" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Undo2 className="h-4 w-4" />
+                      )}
+                      Withdraw
+                    </Button>
+                  ) : null}
+                  {!isOwnProposal && !isPublished ? (
                     <RequestChangesDialog
                       onSubmit={requestChanges}
                       busy={busy && busyLabel === "Requesting changes"}
@@ -1814,25 +1852,25 @@ function DocumentFocusView({
                     </Button>
                   ) : null}
                   {!isPublished && (isOwnProposal || workspace.role === "admin") ? (
-                    <Dialog open={withdrawOpen} onOpenChange={setWithdrawOpen}>
+                    <Dialog open={discardProposalOpen} onOpenChange={setDiscardProposalOpen}>
                       <DialogTrigger asChild>
-                        <Button type="button" variant="secondary" title="Withdraw this proposed change entirely and release the edit lock">
+                        <Button type="button" variant="secondary" title="Discard this proposed change for good and release the edit lock. The draft and its edits cannot be recovered.">
                           <X className="h-4 w-4" />
-                          Withdraw
+                          Discard proposal
                         </Button>
                       </DialogTrigger>
                       <DialogContent>
                         <DialogHeader>
-                          <DialogTitle>Withdraw proposed change</DialogTitle>
+                          <DialogTitle>Discard proposed change</DialogTitle>
                           <DialogDescription>
-                            This closes the proposal and releases the edit lock on this document. It cannot be undone.
+                            This closes the proposal and discards the draft along with every edit in it. It cannot be undone. To keep your edits, use Withdraw instead.
                           </DialogDescription>
                         </DialogHeader>
                         <div className="mt-5 flex justify-end gap-2">
-                          <Button type="button" variant="secondary" onClick={() => setWithdrawOpen(false)}>Cancel</Button>
+                          <Button type="button" variant="secondary" onClick={() => setDiscardProposalOpen(false)}>Cancel</Button>
                           <Button type="button" variant="danger" onClick={() => void abandon()} disabled={busy}>
-                            {busy && busyLabel === "Withdrawing" ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
-                            Withdraw
+                            {busy && busyLabel === "Discarding proposal" ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+                            Discard proposal
                           </Button>
                         </div>
                       </DialogContent>
@@ -1856,12 +1894,10 @@ function DocumentFocusView({
                 })()
               ) : null}
               {detail.docxHiddenChanges.length > 0 ? (
-                <div className="mb-3 shrink-0 rounded-md border border-flame-300 bg-flame-100 p-3">
-                  <p className="text-sm text-flame-500/60">
-                    Also changed: {detail.docxHiddenChanges.join(", ")}. These are not shown in the redline — open
-                    the document to review them.
-                  </p>
-                </div>
+                <p className="mb-3 shrink-0 text-xs text-neutral-500">
+                  <span className="text-neutral-700">Also changed:</span>{" "}
+                  {detail.docxHiddenChanges.join(", ")} — not shown in the redline. Open the document to review.
+                </p>
               ) : null}
               <div className="min-h-0 flex-1">
                 <ProposedChangeDiffView

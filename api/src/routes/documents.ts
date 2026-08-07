@@ -1644,6 +1644,79 @@ router.post("/:documentId/proposed-changes/:proposedChangeId/abandon", async (re
   });
 });
 
+// --- Withdraw proposed change back to draft ---
+
+// The authorship counterpart to a reviewer's "request changes": it returns the work to the
+// author for editing without recording a review verdict against anyone. Abandon closes a
+// proposal for good; this one keeps it alive so it can be re-proposed.
+router.post("/:documentId/proposed-changes/:proposedChangeId/withdraw", async (req, res) => {
+  const documentId = getRouteParam(req, "documentId");
+  const proposedChangeId = getRouteParam(req, "proposedChangeId");
+
+  const proposedChange = await prisma.documentDraft.findFirst({
+    where: {
+      id: proposedChangeId,
+      documentId,
+      workspaceId: req.membership!.workspaceId,
+      document: { archivedAt: null },
+      status: { not: "draft" },
+    },
+    select: { id: true, status: true, proposedById: true },
+  });
+
+  if (!proposedChange) {
+    throw new NotFoundError("Proposed change not found");
+  }
+
+  if (proposedChange.status === "published") {
+    throw new ValidationError("Published proposed changes cannot be withdrawn");
+  }
+
+  if (proposedChange.status === "abandoned") {
+    throw new ValidationError("Proposed change is already closed");
+  }
+
+  if (proposedChange.proposedById !== req.user!.id && req.membership!.role !== "admin") {
+    throw new ForbiddenError("Only the proposer or an admin can withdraw a proposed change");
+  }
+
+  const audit = auditRequestMetadata(req);
+
+  const updated = await prisma.$transaction(async (tx) => {
+    // Conditional so a review landing concurrently cannot be silently undone.
+    const claimed = await tx.documentDraft.updateMany({
+      where: { id: proposedChange.id, status: { in: ["in_review", "changes_requested"] } },
+      data: { status: "draft", proposedAt: null, closedAt: null },
+    });
+
+    if (claimed.count === 0) {
+      throw new ConflictError("Proposed change is no longer open");
+    }
+
+    await tx.auditLog.create({
+      data: {
+        workspaceId: req.membership!.workspaceId,
+        actorId: req.user!.id,
+        action: "proposed_change.withdrawn",
+        entityType: "proposed_change",
+        entityId: proposedChange.id,
+        ip: audit.ip,
+        userAgent: audit.userAgent,
+        metadata: { documentId, previousStatus: proposedChange.status },
+      },
+    });
+
+    return tx.documentDraft.findUniqueOrThrow({ where: { id: proposedChange.id } });
+  });
+
+  res.json({
+    ok: true,
+    data: {
+      draft: formatDraft(updated),
+    },
+  });
+});
+
 // --- List tasks ---
 
 router.get("/:documentId/tasks", async (req, res) => {
@@ -2048,8 +2121,16 @@ router.post("/:documentId/proposed-changes/:proposedChangeId/reviews", async (re
     throw new ValidationError("Closed proposed changes cannot be reviewed");
   }
 
-  if (parsed.data.state === "approved" && existing.proposedById === req.user!.id) {
-    throw new ValidationError("You cannot approve your own proposed change");
+  // A review is a verdict that gets recorded against a reviewer, so an author must not be able
+  // to enter one on their own proposal — it would make the review history unreadable as
+  // evidence of who actually scrutinised the change. Authors move their own work with the
+  // authorship verbs instead: propose, withdraw, revise.
+  if (parsed.data.state !== "commented" && existing.proposedById === req.user!.id) {
+    throw new ValidationError(
+      parsed.data.state === "approved"
+        ? "You cannot approve your own proposed change"
+        : "You cannot request changes on your own proposed change. Withdraw it to keep editing."
+    );
   }
 
   let publication: { contentBuffer: Buffer; mimeType: string } | null = null;

@@ -730,9 +730,22 @@ describe("API integration", () => {
       })
     );
 
-    const changesRequestedReviewResponse = await request(app)
+    // A review is a verdict recorded against a reviewer, so the author cannot enter one on
+    // their own proposal. Authors use /withdraw to reopen their work for editing instead.
+    const selfChangesRequestedResponse = await request(app)
       .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/reviews`)
       .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({
+        state: "changes_requested",
+        body: "Requesting changes on my own proposal.",
+      })
+      .expect(400);
+
+    expect(selfChangesRequestedResponse.body.error.message).toMatch(/cannot request changes on your own/i);
+
+    const changesRequestedReviewResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/reviews`)
+      .set("Authorization", `Bearer ${reviewer.accessToken}`)
       .send({
         state: "changes_requested",
         body: "Please verify the new third rule.",
@@ -766,6 +779,39 @@ describe("API integration", () => {
 
     expect(revisedDetailResponse.body.data.proposedChange.status).toBe("open");
     expect(revisedDetailResponse.body.data.draftContent).toBe(revisedText);
+
+    // Withdraw returns the proposal to the author as an editable draft without recording any
+    // review, then it can be proposed again.
+    const withdrawResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/withdraw`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(withdrawResponse.body.data.draft.status).toBe("draft");
+
+    // Withdrawn work is no longer a proposed change, so it drops out of review entirely.
+    await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(404);
+
+    await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/drafts/${draftId}/propose`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({ summary: "Re-proposing after withdrawing." })
+      .expect(201);
+
+    // Re-proposing keeps the earlier review history intact.
+    const reviewsAfterRepropose = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(
+      (reviewsAfterRepropose.body.data.reviews as Array<{ state: string }>).some(
+        (review) => review.state === "changes_requested"
+      )
+    ).toBe(true);
 
     const selfApprovalResponse = await request(app)
       .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/proposed-changes/${proposedChangeId}/reviews`)
