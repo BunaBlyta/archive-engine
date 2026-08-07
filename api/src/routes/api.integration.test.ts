@@ -898,24 +898,24 @@ describe("API integration", () => {
     );
   });
 
-  it("rejects draft creation from a non-text latest version", async () => {
+  it("rejects invalid DOCX uploads before draft creation", async () => {
     const owner = await registerUser(`${runId}-binary-owner@example.com`);
     const workspaceId = await createWorkspace(owner.accessToken, `${runId} Binary Workspace`);
-    const upload = await uploadDocument(
-      owner.accessToken,
-      workspaceId,
-      "DOCX Document",
-      Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]),
-      "binary.docx",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    );
 
     const response = await request(app)
-      .post(`/v1/workspaces/${workspaceId}/documents/${upload.document.id}/drafts`)
+      .post(`/v1/workspaces/${workspaceId}/documents`)
       .set("Authorization", `Bearer ${owner.accessToken}`)
+      .field("title", "DOCX Document")
+      .attach("file", Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]), {
+        filename: "binary.docx",
+        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      })
       .expect(400);
 
     expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    expect(response.body.error.message).toBe(
+      "This file is named .docx but its contents are not a Word document."
+    );
   });
 
   it("prevents non-members from accessing drafts and proposed changes", async () => {
@@ -1244,6 +1244,64 @@ describe("API integration", () => {
       .expect(400);
 
     expect(rejectedPatchResponse.body.error.message).toMatch(/native editor/i);
+  });
+
+  it("rejects uploads whose contents do not match their declared text or DOCX type", async () => {
+    const owner = await registerUser(`${runId}-content-validation-owner@example.com`);
+    const workspaceId = await createWorkspace(owner.accessToken, `${runId} Content Validation Workspace`);
+
+    const renamedTextResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .field("title", "Renamed Text")
+      .attach("file", Buffer.from("This is text, not a DOCX."), {
+        filename: "renamed.docx",
+        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      })
+      .expect(400);
+
+    expect(renamedTextResponse.body.error.message).toBe(
+      "This file is named .docx but its contents are not a Word document."
+    );
+
+    const nulTextResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .field("title", "Binary Text")
+      .attach("file", Buffer.from([0x76, 0x61, 0x6c, 0x00, 0x69, 0x64]), {
+        filename: "binary.txt",
+        contentType: "text/plain",
+      })
+      .expect(400);
+
+    expect(nulTextResponse.body.error.message).toBe(
+      "This file is named .txt but its contents are not valid UTF-8 text."
+    );
+
+    // A file with no extension takes its type from the declared Content-Type, so that route
+    // needs the same content check — otherwise it is a way straight around the ones above.
+    const extensionlessResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .field("title", "Extensionless Fake DOCX")
+      .attach("file", Buffer.from("Still not a DOCX."), {
+        filename: "report",
+        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      })
+      .expect(400);
+
+    expect(extensionlessResponse.body.error.message).toMatch(/not a Word document/i);
+
+    const docxUpload = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "Valid DOCX",
+      docxFixture,
+      "valid.docx",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    );
+
+    expect(docxUpload.version.version).toBe(1);
   });
 
   it("exports a text/markdown version as PDF and rejects plain-text versions", async () => {

@@ -252,10 +252,49 @@ function sourceUploadMimeType(file: Express.Multer.File) {
   return null;
 }
 
-function assertSupportedSourceUpload(file: Express.Multer.File) {
-  if (!sourceUploadMimeType(file)) {
+// Keyed on the RESOLVED type, not the extension: an upload with no extension takes its type
+// from the declared Content-Type, and that route needs the same content check.
+async function assertSourceUploadContentMatchesType(file: Express.Multer.File, mimeType: string) {
+  // Names what the upload claimed to be, whichever way it claimed it.
+  const claimed = filenameExtension(file.originalname) || mimeType;
+
+  if (mimeType === "text/plain" || mimeType === "text/markdown") {
+    if (file.buffer.includes(0)) {
+      throw new ValidationError(`This file is named ${claimed} but its contents are not valid UTF-8 text.`);
+    }
+
+    try {
+      new TextDecoder("utf-8", { fatal: true }).decode(file.buffer);
+    } catch {
+      throw new ValidationError(`This file is named ${claimed} but its contents are not valid UTF-8 text.`);
+    }
+
+    return;
+  }
+
+  if (mimeType === WORD_MIME_TYPE) {
+    try {
+      const zip = await JSZip.loadAsync(file.buffer);
+      const hasContentTypes = zip.file("[Content_Types].xml") !== null;
+      const hasWordDocument = zip.file("word/document.xml") !== null;
+
+      if (hasContentTypes && hasWordDocument) return;
+    } catch {
+      // Report all invalid DOCX bytes with the same content-mismatch error.
+    }
+
+    throw new ValidationError(`This file is named ${claimed} but its contents are not a Word document.`);
+  }
+}
+
+async function assertSupportedSourceUpload(file: Express.Multer.File) {
+  const mimeType = sourceUploadMimeType(file);
+
+  if (!mimeType) {
     throw new ValidationError("Upload a plain text, Markdown, or DOCX file. PDF editing is not supported.");
   }
+
+  await assertSourceUploadContentMatchesType(file, mimeType);
 }
 
 async function readTextVersion(version: { sha256: string; mimeType: string }) {
@@ -910,7 +949,7 @@ router.post("/", uploadSingleFile, async (req, res) => {
   }
 
   const file = requireUploadedFile(req);
-  assertSupportedSourceUpload(file);
+  await assertSupportedSourceUpload(file);
   const { sha256, sizeBytes, mimeType } = await ingestUploadedFile(file);
 
   const result = await prisma.$transaction(async (tx) => {
