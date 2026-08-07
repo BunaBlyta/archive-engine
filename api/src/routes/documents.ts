@@ -26,6 +26,18 @@ const mammoth = require("mammoth") as {
 
 const router = Router({ mergeParams: true });
 
+// Keep this in one place: changing it requires rebuilding both generated search vectors.
+const SEARCH_TEXT_CONFIG = "english";
+const SEARCH_HIGHLIGHT_START = "\uE000ARCHIVE_ENGINE_SEARCH_START\uE001";
+const SEARCH_HIGHLIGHT_END = "\uE000ARCHIVE_ENGINE_SEARCH_END\uE001";
+const SEARCH_HEADLINE_OPTIONS = [
+  `StartSel=${SEARCH_HIGHLIGHT_START}`,
+  `StopSel=${SEARCH_HIGHLIGHT_END}`,
+  "MaxFragments=2",
+  "MaxWords=35",
+  "MinWords=15",
+].join(",");
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -192,23 +204,6 @@ function parseVersionParam(value: string) {
   }
 
   return version;
-}
-
-function createSearchSnippet(plainText: string | null, query: string) {
-  if (!plainText) return null;
-
-  const normalizedText = plainText.replace(/\s+/g, " ").trim();
-  const index = normalizedText.toLowerCase().indexOf(query.toLowerCase());
-
-  if (index === -1) return null;
-
-  const contextChars = 80;
-  const start = Math.max(0, index - contextChars);
-  const end = Math.min(normalizedText.length, index + query.length + contextChars);
-  const prefix = start > 0 ? "..." : "";
-  const suffix = end < normalizedText.length ? "..." : "";
-
-  return `${prefix}${normalizedText.slice(start, end)}${suffix}`;
 }
 
 async function streamToBuffer(stream: Readable): Promise<Buffer> {
@@ -1036,37 +1031,93 @@ router.get("/search", async (req, res) => {
     throw new ValidationError("Search query is required");
   }
 
-  const matches = await prisma.documentSearch.findMany({
+  type SearchMatch = {
+    documentId: string;
+    documentWorkspaceId: string;
+    documentTitle: string;
+    documentCreatedAt: Date;
+    versionId: string;
+    versionNumber: number;
+    versionSha256: string;
+    versionSizeBytes: number;
+    versionMimeType: string;
+    versionOriginalFilename: string | null;
+    versionCreatedAt: Date;
+    searchStatus: string;
+    searchIndexedAt: Date;
+    searchError: string | null;
+    snippet: string | null;
+  };
+
+  const matches = await prisma.$queryRaw<SearchMatch[]>`
+    WITH search_query AS (
+      SELECT websearch_to_tsquery(${SEARCH_TEXT_CONFIG}::regconfig, ${query}) AS q
+    ),
+    matching_versions AS (
+      -- These two UNION arms are the indexable equivalent of titleVector @@ q OR contentVector @@ q.
+      SELECT dv."id" AS "versionId"
+      FROM "Document" d
+      JOIN "DocumentVersion" dv ON dv."documentId" = d."id"
+      WHERE d."workspaceId" = ${req.membership!.workspaceId}
+        AND d."archivedAt" IS NULL
+        AND d."titleVector" @@ websearch_to_tsquery(${SEARCH_TEXT_CONFIG}::regconfig, ${query})
+      UNION
+      SELECT ds."versionId"
+      FROM "DocumentSearch" ds
+      WHERE ds."workspaceId" = ${req.membership!.workspaceId}
+        AND ds."status" = 'indexed'
+        AND ds."contentVector" @@ websearch_to_tsquery(${SEARCH_TEXT_CONFIG}::regconfig, ${query})
+    ),
+    ranked AS (
+      SELECT
+        d."id" AS "documentId",
+        d."workspaceId" AS "documentWorkspaceId",
+        d."title" AS "documentTitle",
+        d."createdAt" AS "documentCreatedAt",
+        dv."id" AS "versionId",
+        dv."version" AS "versionNumber",
+        dv."sha256" AS "versionSha256",
+        dv."sizeBytes" AS "versionSizeBytes",
+        dv."mimeType" AS "versionMimeType",
+        dv."originalFilename" AS "versionOriginalFilename",
+        dv."createdAt" AS "versionCreatedAt",
+        ds."status" AS "searchStatus",
+        ds."indexedAt" AS "searchIndexedAt",
+        ds."error" AS "searchError",
+        -- A title match is five times as influential as a body match for result ordering.
+        ts_rank(d."titleVector", search_query.q) * 5
+          + ts_rank(ds."contentVector", search_query.q) AS "rank",
+        ts_headline(
+          ${SEARCH_TEXT_CONFIG}::regconfig,
+          concat('Title: ', d."title", E'\\n', coalesce(ds."plainText", '')),
+          search_query.q,
+          ${SEARCH_HEADLINE_OPTIONS}
+        ) AS "snippet"
+      FROM "DocumentSearch" ds
+      JOIN matching_versions mv ON mv."versionId" = ds."versionId"
+      JOIN "DocumentVersion" dv ON dv."id" = ds."versionId"
+      JOIN "Document" d ON d."id" = dv."documentId"
+      CROSS JOIN search_query
+      WHERE ds."workspaceId" = ${req.membership!.workspaceId}
+        AND ds."status" = 'indexed'
+        AND d."archivedAt" IS NULL
+    ),
+    deduplicated AS (
+      SELECT DISTINCT ON ("documentId") *
+      FROM ranked
+      ORDER BY "documentId", "rank" DESC, "versionNumber" DESC
+    )
+    SELECT *
+    FROM deduplicated
+    ORDER BY "rank" DESC, "versionNumber" DESC, "documentId"
+    LIMIT ${limit}
+    OFFSET ${offset}
+  `;
+  const pendingIndexing = await prisma.documentSearch.count({
     where: {
       workspaceId: req.membership!.workspaceId,
-      status: "indexed",
-      version: {
-        document: {
-          archivedAt: null,
-        },
-      },
-      plainText: {
-        contains: query,
-        mode: "insensitive",
-      },
+      status: "pending",
     },
-    include: {
-      version: {
-        include: {
-          document: true,
-          search: {
-            select: {
-              status: true,
-              indexedAt: true,
-              error: true,
-            },
-          },
-        },
-      },
-    },
-    orderBy: { indexedAt: "desc" },
-    take: limit,
-    skip: offset,
   });
 
   res.json({
@@ -1077,18 +1128,33 @@ router.get("/search", async (req, res) => {
         offset,
         nextOffset: matches.length === limit ? offset + limit : null,
       },
+      pendingIndexing,
       results: matches.map((match) => ({
         document: {
-          id: match.version.document.id,
-          workspaceId: match.version.document.workspaceId,
-          title: match.version.document.title,
-          createdAt: match.version.document.createdAt.toISOString(),
+          id: match.documentId,
+          workspaceId: match.documentWorkspaceId,
+          title: match.documentTitle,
+          createdAt: match.documentCreatedAt.toISOString(),
         },
-        version: formatVersion(match.version),
+        version: formatVersion({
+          id: match.versionId,
+          version: match.versionNumber,
+          sha256: match.versionSha256,
+          sizeBytes: match.versionSizeBytes,
+          mimeType: match.versionMimeType,
+          originalFilename: match.versionOriginalFilename,
+          createdAt: match.versionCreatedAt,
+          createdBy: null,
+          search: {
+            status: match.searchStatus,
+            indexedAt: match.searchIndexedAt,
+            error: match.searchError,
+          },
+        }),
         search: {
-          status: match.status,
-          indexedAt: match.indexedAt.toISOString(),
-          snippet: createSearchSnippet(match.plainText, query),
+          status: match.searchStatus,
+          indexedAt: match.searchIndexedAt.toISOString(),
+          snippet: match.snippet,
         },
       })),
     },

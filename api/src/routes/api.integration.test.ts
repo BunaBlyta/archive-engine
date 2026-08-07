@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createHash } from "node:crypto";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@archive/db";
@@ -67,6 +68,62 @@ async function uploadDocument(
     document: { id: string; title: string };
     version: { id: string; version: number; sha256: string };
   };
+}
+
+async function markVersionIndexed(versionId: string, plainText: string) {
+  await prisma.documentSearch.update({
+    where: { versionId },
+    data: {
+      status: "indexed",
+      plainText,
+      error: null,
+    },
+  });
+}
+
+async function addIndexedVersion(
+  workspaceId: string,
+  documentId: string,
+  version: number,
+  plainText: string
+) {
+  const content = Buffer.from(plainText, "utf8");
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  const storageKey = `integration-test/${sha256}`;
+
+  const blob = await prisma.blob.create({
+    data: {
+      sha256,
+      sizeBytes: content.length,
+      storageKey,
+    },
+  });
+
+  const versionRow = await prisma.documentVersion.create({
+    data: {
+      workspaceId,
+      documentId,
+      version,
+      blobId: blob.id,
+      sha256,
+      sizeBytes: content.length,
+      mimeType: "text/plain",
+      originalFilename: `integration-v${version}.txt`,
+    },
+  });
+
+  await prisma.documentSearch.create({
+    data: {
+      versionId: versionRow.id,
+      workspaceId,
+      status: "indexed",
+      plainText,
+      error: null,
+    },
+  });
+
+  createdBlobHashes.push(sha256);
+  return versionRow;
 }
 
 afterAll(async () => {
@@ -1120,14 +1177,7 @@ describe("API integration", () => {
     const versionId = uploadResponse.body.data.version.id as string;
     createdBlobHashes.push(uploadResponse.body.data.version.sha256 as string);
 
-    await prisma.documentSearch.update({
-      where: { versionId },
-      data: {
-        status: "indexed",
-        plainText: file.toString("utf8"),
-        error: null,
-      },
-    });
+    await markVersionIndexed(versionId, file.toString("utf8"));
 
     const searchResponse = await request(app)
       .get(`/v1/workspaces/${workspaceId}/documents/search`)
@@ -1163,6 +1213,137 @@ describe("API integration", () => {
         }),
       ])
     );
+  });
+
+  it("finds stems, words across paragraphs, and title-only matches", async () => {
+    const owner = await registerUser(`${runId}-search-semantics-owner@example.com`);
+    const workspaceId = await createWorkspace(owner.accessToken, `${runId} Search Semantics Workspace`);
+
+    const stemming = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "Stemming fixture",
+      Buffer.from("The policy applies to every review cycle."),
+      "stemming.txt",
+      "text/plain"
+    );
+    await markVersionIndexed(stemming.version.id, "The policy applies to every review cycle.");
+
+    const paragraphs = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "Paragraph fixture",
+      Buffer.from("Annual compliance planning.\n\nThe review happens each spring."),
+      "paragraphs.txt",
+      "text/plain"
+    );
+    await markVersionIndexed(
+      paragraphs.version.id,
+      "Annual compliance planning.\n\nThe review happens each spring."
+    );
+
+    const titleOnly = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "Unicorn Retention Plan",
+      Buffer.from("This body contains ordinary project notes."),
+      "title-only.txt",
+      "text/plain"
+    );
+    await markVersionIndexed(titleOnly.version.id, "This body contains ordinary project notes.");
+
+    const stemmingResponse = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/search`)
+      .query({ q: "policies" })
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(stemmingResponse.body.data.results.map((result: { document: { id: string } }) => result.document.id))
+      .toContain(stemming.document.id);
+
+    const paragraphResponse = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/search`)
+      .query({ q: "annual review" })
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(paragraphResponse.body.data.results.map((result: { document: { id: string } }) => result.document.id))
+      .toContain(paragraphs.document.id);
+
+    const titleResponse = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/search`)
+      .query({ q: "unicorn" })
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(titleResponse.body.data.results[0]).toEqual(
+      expect.objectContaining({
+        document: expect.objectContaining({ id: titleOnly.document.id }),
+        search: expect.objectContaining({
+          snippet: expect.stringContaining("\uE000ARCHIVE_ENGINE_SEARCH_START\uE001"),
+        }),
+      })
+    );
+  });
+
+  it("deduplicates several indexed versions to the newest matching version", async () => {
+    const owner = await registerUser(`${runId}-search-dedup-owner@example.com`);
+    const workspaceId = await createWorkspace(owner.accessToken, `${runId} Search Dedup Workspace`);
+    const first = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "Versioned policy",
+      Buffer.from("The policy was approved in version one."),
+      "version-1.txt",
+      "text/plain"
+    );
+    await markVersionIndexed(first.version.id, "The policy was approved in version one.");
+    await addIndexedVersion(workspaceId, first.document.id, 2, "The policy was revised in version two.");
+    const newest = await addIndexedVersion(
+      workspaceId,
+      first.document.id,
+      3,
+      "The policy was published in version three."
+    );
+
+    const response = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/search`)
+      .query({ q: "policy" })
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(response.body.data.results).toHaveLength(1);
+    expect(response.body.data.results[0].version.id).toBe(newest.id);
+  });
+
+  it("ranks a title match above a single body mention", async () => {
+    const owner = await registerUser(`${runId}-search-ranking-owner@example.com`);
+    const workspaceId = await createWorkspace(owner.accessToken, `${runId} Search Ranking Workspace`);
+    const bodyMatch = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "General project notes",
+      Buffer.from("The compass was mentioned once in the body."),
+      "body-match.txt",
+      "text/plain"
+    );
+    await markVersionIndexed(bodyMatch.version.id, "The compass was mentioned once in the body.");
+
+    const titleMatch = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "Compass operating guide",
+      Buffer.from("This document explains navigation procedures."),
+      "title-match.txt",
+      "text/plain"
+    );
+    await markVersionIndexed(titleMatch.version.id, "This document explains navigation procedures.");
+
+    const response = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/search`)
+      .query({ q: "compass" })
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(response.body.data.results.map((result: { document: { id: string } }) => result.document.id))
+      .toEqual([titleMatch.document.id, bodyMatch.document.id]);
   });
 
   it("rejects PDF uploads and initializes native DOCX preview and editing", async () => {

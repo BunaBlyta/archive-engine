@@ -92,6 +92,11 @@ model Document {
   drafts   DocumentDraft[]
   tasks    Task[]
 
+  // Also carries the generated tsvector column "titleVector" and its GIN index, declared in
+  // raw SQL in migrations/20260807090000_add_full_text_search_vectors. Prisma cannot express
+  // generated tsvector columns or GIN indexes, so `prisma db push` will not recreate them — use
+  // migrations for this table.
+
   @@index([workspaceId, archivedAt, createdAt])
 }
 
@@ -203,6 +208,11 @@ model DocumentSearch {
 
   version   DocumentVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
   workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  // Also carries the generated tsvector column "contentVector" and its GIN index, declared in
+  // raw SQL in migrations/20260807090000_add_full_text_search_vectors. Prisma cannot express
+  // generated tsvector columns or GIN indexes, so `prisma db push` will not recreate them — use
+  // migrations for this table.
 
   @@index([workspaceId])
 }
