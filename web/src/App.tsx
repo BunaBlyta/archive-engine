@@ -178,6 +178,32 @@ function previewKind(mimeType: string): "text" | "html" | "unsupported" {
   return "unsupported";
 }
 
+// The API wraps search matches in private-use sentinels rather than returning HTML, so nothing
+// it produces can be injected into the page. Splitting on them here is what turns a match into a
+// highlight; rendering the snippet raw would show the sentinel characters to the user.
+const SEARCH_HIGHLIGHT_START = "\uE000ARCHIVE_ENGINE_SEARCH_START\uE001";
+const SEARCH_HIGHLIGHT_END = "\uE000ARCHIVE_ENGINE_SEARCH_END\uE001";
+
+function SearchSnippet({ snippet }: { snippet: string }) {
+  const parts = snippet.split(SEARCH_HIGHLIGHT_START);
+
+  return (
+    <>
+      {parts.map((part, index) => {
+        if (index === 0) return <span key={index}>{part}</span>;
+
+        const [match, ...rest] = part.split(SEARCH_HIGHLIGHT_END);
+        return (
+          <span key={index}>
+            <mark className="rounded bg-accent-100 px-0.5 text-inherit">{match}</mark>
+            {rest.join(SEARCH_HIGHLIGHT_END)}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 function latestVersion(document: ArchiveDocument) {
   return document.latestVersion ?? document.versions?.[document.versions.length - 1] ?? null;
 }
@@ -1269,7 +1295,11 @@ function SearchResultList({
           <div className="min-w-0">
             <h4 className="truncate text-sm">{result.document.title}</h4>
             <p className={cn("mt-1 text-sm text-neutral-500", compact ? "line-clamp-1" : "line-clamp-2")}>
-              {result.search.snippet ?? "Matched indexed content"}
+              {result.search.snippet ? (
+                <SearchSnippet snippet={result.search.snippet} />
+              ) : (
+                "Matched indexed content"
+              )}
             </p>
             <p className="mt-1 truncate text-xs text-neutral-400">{result.version.originalFilename ?? result.version.mimeType} · v{result.version.version}</p>
           </div>
