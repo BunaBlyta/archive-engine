@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { cloneElement, lazy, Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Archive,
@@ -29,7 +29,7 @@ import {
   X,
 } from "lucide-react";
 import logoIcon from "./assets/logo-icon.png";
-import { api, ApiError } from "./api/client";
+import { api, ApiError, setAuthHandlers } from "./api/client";
 import type {
   ArchiveDocument,
   LineComment,
@@ -70,6 +70,9 @@ import { OnlyOfficeEditor } from "./components/OnlyOfficeEditor";
 type Notice = { title: string; description?: string };
 
 const PAGE_SIZE = 25;
+
+// Comfortably inside the API's 15-minute access token lifetime.
+const ACCESS_TOKEN_RENEW_MS = 13 * 60 * 1000;
 
 function errorMessage(error: unknown) {
   if (error instanceof ApiError) {
@@ -253,6 +256,38 @@ export function App() {
 
     void restore();
   }, []);
+
+  // Access tokens last 15 minutes and were previously only obtained at boot, so a session
+  // silently stopped working after 15 minutes of use and every action failed until reload.
+  // Two mechanisms, because neither is sufficient alone: the timer keeps a long editing session
+  // alive, and the 401 retry covers the case where the timer did not fire — a sleeping laptop,
+  // a backgrounded tab whose timers were throttled.
+  useEffect(() => {
+    if (!accessToken) return;
+
+    async function renew() {
+      try {
+        const data = await api.refresh();
+        setSession(data.accessToken);
+        return data.accessToken;
+      } catch {
+        clearSession();
+        return null;
+      }
+    }
+
+    setAuthHandlers({
+      refresh: renew,
+      onSessionExpired: () => clearSession(),
+    });
+
+    const timer = window.setInterval(() => void renew(), ACCESS_TOKEN_RENEW_MS);
+
+    return () => {
+      window.clearInterval(timer);
+      setAuthHandlers(null);
+    };
+  }, [accessToken === null]);
 
   useEffect(() => {
     window.history.replaceState({ seq: 0 }, "");
@@ -1754,6 +1789,7 @@ function DocumentFocusView({
               ) : (
                 <textarea
                   ref={textareaRef}
+                  aria-label="Draft content"
                   value={content}
                   onChange={(event) => setContent(event.target.value)}
                   className="h-full min-h-[28rem] w-full resize-none rounded-lg border border-neutral-100 bg-white px-3 py-2 font-mono text-sm leading-6 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -1765,6 +1801,7 @@ function DocumentFocusView({
           <div className="flex min-h-0 flex-col gap-3">
             <div className="flex min-h-0 flex-1 flex-col rounded-2xl bg-white py-3">
               <textarea
+                aria-label="Change summary"
                 value={summary}
                 onChange={(event) => setSummary(event.target.value)}
                 placeholder="Optional"
@@ -2833,11 +2870,16 @@ function Pager({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+// The label was previously not associated with its input at all — no htmlFor, no id — so screen
+// readers announced an unlabelled field and clicking the label did nothing. Generating the id
+// here keeps every call site unchanged.
+function Field({ label, children }: { label: string; children: React.ReactElement<{ id?: string }> }) {
+  const id = useId();
+
   return (
     <div className="space-y-2">
-      <Label>{label}</Label>
-      {children}
+      <Label htmlFor={id}>{label}</Label>
+      {cloneElement(children, { id })}
     </div>
   );
 }

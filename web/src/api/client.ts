@@ -31,6 +31,38 @@ export class ApiError extends Error {
   }
 }
 
+// Access tokens live 15 minutes. Rather than have every caller handle expiry, the client
+// refreshes once on a 401 and replays the request. Registered from App on boot so this module
+// stays free of store imports.
+type AuthHandlers = {
+  refresh: () => Promise<string | null>;
+  onSessionExpired: () => void;
+};
+
+let authHandlers: AuthHandlers | null = null;
+let inFlightRefresh: Promise<string | null> | null = null;
+
+export function setAuthHandlers(handlers: AuthHandlers | null) {
+  authHandlers = handlers;
+}
+
+// Single-flight: a burst of parallel requests hitting an expired token must not each rotate the
+// refresh cookie, because rotation invalidates the previous one and the losers get logged out.
+function refreshOnce(): Promise<string | null> {
+  if (!authHandlers) return Promise.resolve(null);
+
+  if (!inFlightRefresh) {
+    inFlightRefresh = authHandlers
+      .refresh()
+      .catch(() => null)
+      .finally(() => {
+        inFlightRefresh = null;
+      });
+  }
+
+  return inFlightRefresh;
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const body = (await response.json()) as ApiEnvelope<T>;
 
@@ -44,8 +76,9 @@ async function parseResponse<T>(response: Response): Promise<T> {
 async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
-  token?: string | null
-) {
+  token?: string | null,
+  retryOnUnauthorized = true
+): Promise<T> {
   const headers = new Headers(options.headers);
 
   if (!(options.body instanceof FormData) && !headers.has("Content-Type")) {
@@ -61,6 +94,18 @@ async function apiRequest<T>(
     headers,
     credentials: "include",
   });
+
+  // Only retry authenticated calls, and never the auth endpoints themselves — refreshing in
+  // response to a failed refresh would loop.
+  if (response.status === 401 && retryOnUnauthorized && token && !path.startsWith("/v1/auth/")) {
+    const refreshed = await refreshOnce();
+
+    if (refreshed) {
+      return apiRequest<T>(path, options, refreshed, false);
+    }
+
+    authHandlers?.onSessionExpired();
+  }
 
   return parseResponse<T>(response);
 }
