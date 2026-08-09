@@ -1,4 +1,4 @@
-// Env vars with no safe default anywhere in the codebase. PORT, WEB_ORIGIN,
+// Env vars with no safe default anywhere in the codebase. PORT, WEB_ORIGINS,
 // ONLYOFFICE_URL, EDITOR_PUBLIC_API_URL, and the MINIO_* vars all fall back to a
 // working local value and are intentionally left out. DATABASE_URL has no fallback either —
 // Prisma reads it lazily, so leaving it unchecked here would let a missing value surface as a

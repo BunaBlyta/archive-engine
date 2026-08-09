@@ -188,4 +188,4 @@ Authorization: Bearer <access-token>
 
 This project is intended to demonstrate product and system design for a document governance workflow: versioned/audited data modeling, a redline diff engine, draft/proposed-change state machines, and role-based access control. It is not production-ready yet.
 
-Before production use, it would need production secret management, rate limiting, deployment configuration, encryption at rest, and a full security review. See [future.md](future.md) for deferred items and rationale.
+Before production use, it would need production secret management, deployment configuration, encryption at rest, and a full security review. Basic rate limiting, security headers (helmet), and `trust proxy` configuration are in place — see `api/src/app.ts` and `api/src/middleware/rateLimit.ts`. See [future.md](future.md) for deferred items and rationale.

@@ -667,6 +667,41 @@ describe("API integration", () => {
     expect(memberEntry?.contributionCount).toBe(1);
   });
 
+  // The global JSON body limit is deliberately small, but a draft's whole text is PATCHed as JSON
+  // and documents can be uploaded far larger than that limit. Without a route-scoped parser this
+  // returns 413 and editing any sizeable document breaks.
+  it("saves a draft whose content exceeds the global JSON body limit", async () => {
+    const owner = await registerUser(`${runId}-large-draft-owner@example.com`);
+    const workspaceId = await createWorkspace(owner.accessToken, `${runId} Large Draft Workspace`);
+    const upload = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "Large Document",
+      Buffer.from(`${runId} baseline\n`),
+      "large.txt",
+      "text/plain"
+    );
+
+    const draftResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${upload.document.id}/drafts`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(201);
+
+    // Comfortably over the 100kb global limit, well under the draft route's own cap.
+    const largeContent = `${runId} baseline\n${"policy clause line\n".repeat(30_000)}`;
+    expect(Buffer.byteLength(largeContent)).toBeGreaterThan(150_000);
+
+    const saved = await request(app)
+      .patch(
+        `/v1/workspaces/${workspaceId}/documents/${upload.document.id}/drafts/${draftResponse.body.data.draft.id}`
+      )
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .send({ content: largeContent })
+      .expect(200);
+
+    expect(saved.body.data.draft.content).toBe(largeContent);
+  });
+
   it("supports the full plain-text proposed change workflow", async () => {
     const owner = await registerUser(`${runId}-governance-owner@example.com`);
     const reviewerEmail = `${runId}-governance-reviewer@example.com`;
@@ -1640,5 +1675,91 @@ describe("API integration", () => {
       .set("Authorization", `Bearer ${reviewer.accessToken}`)
       .send({ diffLineIndex: 0, body: "Too late" })
       .expect(400);
+  });
+
+  it("only lets the assignee, creator, or an admin complete a task", async () => {
+    const ownerEmail = `${runId}-task-auth-owner@example.com`;
+    const creatorEmail = `${runId}-task-auth-creator@example.com`;
+    const assigneeEmail = `${runId}-task-auth-assignee@example.com`;
+    const bystanderEmail = `${runId}-task-auth-bystander@example.com`;
+    const owner = await registerUser(ownerEmail);
+    const creator = await registerUser(creatorEmail);
+    const assignee = await registerUser(assigneeEmail);
+    const bystander = await registerUser(bystanderEmail);
+    const workspaceId = await createWorkspace(owner.accessToken, `${runId} Task Auth Workspace`);
+
+    for (const email of [creatorEmail, assigneeEmail, bystanderEmail]) {
+      await request(app)
+        .post(`/v1/workspaces/${workspaceId}/members`)
+        .set("Authorization", `Bearer ${owner.accessToken}`)
+        .send({ email, role: "reviewer" })
+        .expect(201);
+    }
+
+    const upload = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "Task Auth Document",
+      Buffer.from(`${runId} task auth doc\n`),
+      "task-auth.txt",
+      "text/plain"
+    );
+    const documentId = upload.document.id;
+
+    const createResponse = await request(app)
+      .post(`/v1/workspaces/${workspaceId}/documents/${documentId}/tasks`)
+      .set("Authorization", `Bearer ${creator.accessToken}`)
+      .send({ title: "Review this", assigneeId: assignee.userId })
+      .expect(201);
+
+    const taskId = createResponse.body.data.task.id as string;
+
+    // A member who is neither the assignee, the creator, nor an admin cannot complete it
+    const forbiddenResponse = await request(app)
+      .patch(`/v1/workspaces/${workspaceId}/documents/${documentId}/tasks/${taskId}`)
+      .set("Authorization", `Bearer ${bystander.accessToken}`)
+      .expect(403);
+
+    expect(forbiddenResponse.body).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: "FORBIDDEN" }),
+      })
+    );
+
+    // The task is still open
+    const listResponse = await request(app)
+      .get(`/v1/workspaces/${workspaceId}/documents/${documentId}/tasks`)
+      .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(listResponse.body.data.tasks).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: taskId, status: "open" })])
+    );
+
+    // The assignee can complete their own task
+    const completeResponse = await request(app)
+      .patch(`/v1/workspaces/${workspaceId}/documents/${documentId}/tasks/${taskId}`)
+      .set("Authorization", `Bearer ${assignee.accessToken}`)
+      .expect(200);
+
+    expect(completeResponse.body.data.task).toEqual(
+      expect.objectContaining({ status: "done", completedAt: expect.any(String) })
+    );
+  });
+
+  it("returns a JSON error envelope for unknown routes instead of Express's default HTML page", async () => {
+    const response = await request(app).get("/v1/this-route-does-not-exist").expect(404);
+
+    expect(response.type).toBe("application/json");
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: "NOT_FOUND",
+          message: expect.any(String),
+          requestId: expect.any(String),
+        }),
+      })
+    );
   });
 });

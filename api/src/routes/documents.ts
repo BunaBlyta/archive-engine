@@ -1961,11 +1961,19 @@ router.patch("/:documentId/tasks/:taskId", async (req, res) => {
       workspaceId: req.membership!.workspaceId,
       document: { archivedAt: null },
     },
-    select: { id: true, status: true },
+    select: { id: true, status: true, assigneeId: true, createdById: true },
   });
 
   if (!task) {
     throw new NotFoundError("Task not found");
+  }
+
+  if (
+    task.assigneeId !== req.user!.id &&
+    task.createdById !== req.user!.id &&
+    req.membership!.role !== "admin"
+  ) {
+    throw new ForbiddenError("Only the assignee, the task's creator, or an admin can complete this task");
   }
 
   if (task.status === "done") {
