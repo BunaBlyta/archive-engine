@@ -18,7 +18,8 @@
     "db:generate": "npm run db:generate -w @archive/db",
     "db:migrate": "npm run db:migrate -w @archive/db",
     "db:studio": "npm run db:studio -w @archive/db",
-    "build:storage": "npm run build -w @archive/storage"
+    "build:storage": "npm run build -w @archive/storage",
+    "test:e2e": "npm run e2e -w web"
   },
   "devDependencies": {
     "concurrently": "^9.2.4",

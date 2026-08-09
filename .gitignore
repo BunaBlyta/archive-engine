@@ -10,3 +10,7 @@ future.md
 
 # TypeScript incremental build artifacts
 *.tsbuildinfo
+
+# Playwright
+web/test-results/
+web/playwright-report/
