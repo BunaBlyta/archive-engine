@@ -1867,8 +1867,13 @@ function DocumentFocusView({
                 <div className="min-w-0">
                   <span className="text-base">Proposed change</span>
                   <p className="mt-1 text-sm text-neutral-500">Based on version {detail.baseVersion.version}</p>
-                  {isOwnProposal ? (
-                    <p className="mt-1 text-sm text-flame-500/60">Someone else on the workspace needs to approve this change.</p>
+                  {/* Neutral, and hidden once changes are requested: it is passive status, and
+                      the flame accent belongs to the one thing asking the author to act. Showing
+                      both put two oranges side by side competing for the same attention. */}
+                  {isOwnProposal && detail.proposedChange.status !== "changes_requested" ? (
+                    <p className="mt-1 text-sm text-neutral-500">
+                      Someone else on the workspace needs to approve this change.
+                    </p>
                   ) : null}
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
