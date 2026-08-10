@@ -1961,8 +1961,8 @@ function DocumentFocusView({
                   return latestRequest ? (
                     // No card: a rule and some type. The reviewer's note is the only thing
                     // here worth weight, so it reads as ink and everything else recedes.
-                    <div className="mb-4 shrink-0 border-l-2 border-flame-300 pl-3">
-                      <p className="text-xs text-flame-600">
+                    <div className="mb-4 shrink-0 border-l-2 border-accent-200 pl-3">
+                      <p className="text-xs text-accent-600">
                         Changes requested by{" "}
                         {latestRequest.reviewer ? displayName(latestRequest.reviewer) : "a reviewer"}
                       </p>
