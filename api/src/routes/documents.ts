@@ -2909,17 +2909,20 @@ router.get("/:documentId/versions/:version/export-pdf", async (req, res) => {
     throw new NotFoundError("Document version not found");
   }
 
-  if (version.mimeType !== "text/markdown") {
-    throw new ValidationError("Only Markdown versions can be exported as PDF");
+  // Plain text is valid Markdown with no markup, so it renders through the same pipeline. Word
+  // is excluded deliberately: converting it faithfully needs a real converter, and the editor
+  // already exports to PDF itself.
+  if (version.mimeType !== "text/markdown" && version.mimeType !== "text/plain") {
+    throw new ValidationError("Only plain text and Markdown versions can be exported as PDF");
   }
 
   const markdown = await streamToString(await getBlob(version.sha256));
   const pdfBuffer = await renderMarkdownToPdf(markdown);
   const baseFilename = safeDownloadFilename(
-    version.originalFilename?.replace(/\.md$/, ".pdf") ?? null,
+    version.originalFilename?.replace(/\.(md|markdown|txt)$/i, ".pdf") ?? null,
     version.document.title,
     version.version
-  ).replace(/\.md$/, ".pdf");
+  ).replace(/\.(md|markdown|txt)$/i, ".pdf");
 
   const audit = auditRequestMetadata(req);
   await prisma.auditLog.create({

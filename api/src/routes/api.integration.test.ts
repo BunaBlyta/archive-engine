@@ -1596,11 +1596,40 @@ describe("API integration", () => {
     });
     expect(auditLogs).toHaveLength(1);
 
-    // Exporting a plain-text version returns 400
-    await request(app)
+    // Plain text exports too: it is Markdown with no markup, so it runs through the same
+    // renderer. A .txt that could not export while a .md could would be an arbitrary
+    // distinction from the outside.
+    const plainExport = await request(app)
       .get(`/v1/workspaces/${workspaceId}/documents/${documentId}/versions/1/export-pdf`)
       .set("Authorization", `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(plainExport.headers["content-type"]).toContain("application/pdf");
+    expect(plainExport.body.slice(0, 4).toString()).toBe("%PDF");
+  });
+
+  it("refuses to export a Word version as PDF", async () => {
+    const owner = await registerUser(`${runId}-pdf-word-owner@example.com`);
+    const workspaceId = await createWorkspace(owner.accessToken, `${runId} Word Export Workspace`);
+    const upload = await uploadDocument(
+      owner.accessToken,
+      workspaceId,
+      "Word Export Document",
+      docxFixture,
+      "export.docx",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    );
+
+    // Converting Word faithfully needs a real converter; the ONLYOFFICE editor already exports
+    // to PDF itself, so the API says no rather than producing a lossy approximation.
+    const response = await request(app)
+      .get(
+        `/v1/workspaces/${workspaceId}/documents/${upload.document.id}/versions/1/export-pdf`
+      )
+      .set("Authorization", `Bearer ${owner.accessToken}`)
       .expect(400);
+
+    expect(response.body.error.message).toMatch(/plain text and Markdown/i);
   });
 
   it("supports line comments on a proposed change", async () => {

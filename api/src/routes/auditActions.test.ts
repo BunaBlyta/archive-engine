@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 // new action added on the server shows up in the activity log as "proposed_change.revised" until
 // someone notices. This test fails the moment the two lists drift apart.
 const API_DIR = resolve(__dirname, "..");
-const APP_TSX = resolve(__dirname, "../../../web/src/App.tsx");
+// The label map lives with the other formatting helpers, not in App.
+const WEB_FORMAT = resolve(__dirname, "../../../web/src/lib/format.ts");
 
 function auditActionsWrittenByApi() {
   const sources = ["routes/documents.ts", "routes/workspaces.ts", "routes/editor.ts"].map((file) =>
@@ -28,7 +29,7 @@ function auditActionsWrittenByApi() {
 }
 
 function auditActionsLabelledByWeb() {
-  const source = readFileSync(APP_TSX, "utf8");
+  const source = readFileSync(WEB_FORMAT, "utf8");
   const start = source.indexOf("const AUDIT_ACTION_LABELS");
   const end = source.indexOf("};", start);
   const block = source.slice(start, end);

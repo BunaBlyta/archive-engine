@@ -14,7 +14,7 @@ import { TasksPanel } from "../tasks/TasksPanel";
 import { ArchiveDocumentDialog } from "./ArchiveDocumentDialog";
 import { VersionPreviewContent } from "./VersionPreviewContent";
 import { VersionRow } from "./VersionRow";
-import { ArrowDownToLine, Eye, FileText, History, Loader2, Pencil, Save, Shield, Trash2, Undo2, Upload, X } from "lucide-react";
+import { ArrowDownToLine, Eye, FileDown, FileText, History, Loader2, Pencil, Save, Shield, Trash2, Undo2, Upload, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
@@ -48,6 +48,7 @@ export function DocumentFocusView({
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [editorConfig, setEditorConfig] = useState<OnlyOfficeEditorConfig | null>(null);
   const [discardProposalOpen, setDiscardProposalOpen] = useState(false);
@@ -357,6 +358,34 @@ export function DocumentFocusView({
     }
   }
 
+  // Word is excluded server-side: converting it faithfully needs a real converter, and the
+  // ONLYOFFICE editor already exports to PDF itself.
+  const canExportPdf =
+    selectedVersion?.mimeType === "text/markdown" || selectedVersion?.mimeType === "text/plain";
+
+  async function exportSelectedVersionAsPdf() {
+    if (!selectedVersion) return;
+    setExportBusy(true);
+    try {
+      const { blob, filename } = await api.exportVersionAsPdf(
+        token,
+        workspace.id,
+        doc.id,
+        selectedVersion.version
+      );
+      const url = URL.createObjectURL(blob);
+      const link = window.document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      onError(errorMessage(error));
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
   async function downloadSelectedVersion() {
     if (!selectedVersion) return;
     setDownloadBusy(true);
@@ -640,6 +669,18 @@ export function DocumentFocusView({
                         title="Download"
                       >
                         {downloadBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}
+                      </Button>
+                    ) : null}
+                    {selectedVersion && canExportPdf ? (
+                      <Button
+                        variant="secondary"
+                        size="icon"
+                        onClick={() => void exportSelectedVersionAsPdf()}
+                        disabled={exportBusy}
+                        aria-label={`Export version ${selectedVersion.version} as PDF`}
+                        title="Export as PDF"
+                      >
+                        {exportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
                       </Button>
                     ) : null}
                   </div>

@@ -24,7 +24,7 @@ Deliberately out of scope: PDF editing, rich-text/visual redlines, full-fidelity
 - Edit lock: one active draft or proposed change per document at a time, enforced by a partial unique index rather than application code. `withdraw` returns it to a draft; `discard` closes it for good
 - Markdown formatting toolbar (Bold / Italic / Heading / Bullet) for markdown-flavored drafts
 - Inline line comments anchored to specific diff lines on a proposed change
-- Export as PDF for published markdown versions (`markdown-it` + `pdfkit`)
+- Export as PDF for published plain text and Markdown versions (`markdown-it` + `pdfkit`). Word is excluded: converting it faithfully needs a real converter, and the ONLYOFFICE editor exports to PDF itself
 - Authors cannot approve *or* request changes on their own proposed change — a review is a verdict recorded against a reviewer. They get `withdraw` instead, which returns the work to a draft without recording a review. Archiving a document is admin-only
 - Postgres full-text search over published versions: generated `tsvector` columns with GIN indexes, `websearch_to_tsquery`, title weighted above body, one result per document, and `ts_headline` snippets returned with inert delimiters so the client renders its own highlights
 - Full audit trail covering every governance event (draft, propose, review, publish, withdraw, discard, task, export, comment), with the document named on each entry
