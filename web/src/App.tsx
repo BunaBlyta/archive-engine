@@ -992,10 +992,10 @@ function DashboardPanel({
               <button
                 type="button"
                 onClick={onOpenActivityLog}
-                className="flex items-center gap-3 text-xs text-accent-400 hover:text-accent-600"
+                className="flex items-center gap-1.5 text-[11px] text-accent-400 hover:text-accent-600"
               >
-                <Activity className="h-4 w-4 shrink-0" />
-                See recent activity
+                <Activity className="h-3 w-3 shrink-0" />
+                Recent activity
               </button>
               {loading ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-neutral-400" /> : null}
             </div>
