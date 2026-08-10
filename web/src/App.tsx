@@ -1081,7 +1081,12 @@ function ActivityLogPage({
               </div>
               <div className={cn("flex min-w-0 flex-1 items-start justify-between gap-3 text-sm", index < auditLogs.length - 1 ? "pb-6" : "")}>
                 <div className="min-w-0">
-                  <div>{auditActionLabel(log.action)}</div>
+                  <div className="truncate">
+                    {auditActionLabel(log.action)}
+                    {log.document ? (
+                      <span className="text-neutral-400"> · {log.document.title}</span>
+                    ) : null}
+                  </div>
                   <div className="truncate text-xs text-neutral-400">
                     {log.actorEmail
                       ? displayName({ email: log.actorEmail, firstName: log.actorFirstName, lastName: log.actorLastName })

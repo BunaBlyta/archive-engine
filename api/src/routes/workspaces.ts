@@ -133,6 +133,44 @@ router.get("/:workspaceId/audit-logs", requireMembership, async (req, res) => {
     },
   });
 
+  // Almost every entry records which document it concerns, but only as an id buried in metadata,
+  // so the activity log read as a list of actions with no subject. Resolve the titles in one
+  // query and hand them to the client.
+  const documentIds = new Set<string>();
+  for (const log of logs) {
+    if (log.entityType === "document") documentIds.add(log.entityId);
+
+    const documentId = (log.metadata as { documentId?: unknown } | null)?.documentId;
+    if (typeof documentId === "string") documentIds.add(documentId);
+  }
+
+  const documents =
+    documentIds.size > 0
+      ? await prisma.document.findMany({
+          where: { id: { in: [...documentIds] }, workspaceId: req.membership!.workspaceId },
+          select: { id: true, title: true },
+        })
+      : [];
+
+  const titleById = new Map(documents.map((document) => [document.id, document.title]));
+
+  function documentRefFor(log: (typeof logs)[number]) {
+    const fromMetadata = (log.metadata as { documentId?: unknown } | null)?.documentId;
+    const id =
+      log.entityType === "document"
+        ? log.entityId
+        : typeof fromMetadata === "string"
+          ? fromMetadata
+          : null;
+
+    if (!id) return null;
+
+    // A hard-deleted document leaves its log entries behind on purpose — the record of what
+    // happened outlives the thing it happened to.
+    const title = titleById.get(id);
+    return title ? { id, title } : null;
+  }
+
   res.json({
     ok: true,
     data: {
@@ -144,6 +182,7 @@ router.get("/:workspaceId/audit-logs", requireMembership, async (req, res) => {
       auditLogs: logs.map((log) => ({
         id: log.id,
         action: log.action,
+        document: documentRefFor(log),
         entityType: log.entityType,
         entityId: log.entityId,
         actorId: log.actorId,

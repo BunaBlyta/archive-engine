@@ -422,6 +422,20 @@ describe("API integration", () => {
         }),
       ])
     );
+
+    // Which document an entry concerns is only an id in metadata, so the endpoint resolves the
+    // title. Without it the activity log is a list of actions with no subject.
+    const documentEntries = (
+      auditResponse.body.data.auditLogs as Array<{
+        action: string;
+        document: { id: string; title: string } | null;
+      }>
+    ).filter((log) => log.action.startsWith("document"));
+
+    expect(documentEntries.length).toBeGreaterThan(0);
+    for (const entry of documentEntries) {
+      expect(entry.document).toEqual({ id: documentId, title: "Integration Document" });
+    }
   });
 
   it("enforces admin-only archive and returns per-workspace roles", async () => {

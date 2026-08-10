@@ -204,6 +204,9 @@ export type SearchResult = {
 export type AuditLog = {
   id: string;
   action: string;
+  // Resolved server-side from the entry's metadata; null when the entry is not about a document
+  // or the document has since been deleted.
+  document: { id: string; title: string } | null;
   entityType: string;
   entityId: string;
   actorId: string | null;
