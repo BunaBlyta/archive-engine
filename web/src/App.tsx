@@ -1425,7 +1425,7 @@ function DocumentQuickPreview({
         )}
       </div>
       <Dialog open={expanded} onOpenChange={setExpanded}>
-        <DialogContent className="h-[95vh] w-[95vw] max-w-none overflow-hidden rounded-none border-0 bg-transparent p-0">
+        <DialogContent className="h-[95vh] w-[95vw] max-w-none overflow-hidden rounded-lg border-0 bg-white p-0">
           {version ? (
             <VersionPreviewContent token={token} workspace={workspace} document={document} version={version} onError={onError} />
           ) : (
@@ -2700,7 +2700,11 @@ function VersionPreviewContent({
           className="h-full w-full border-0 bg-neutral-100"
         />
       ) : kind === "text" && text !== null ? (
-        <pre className="h-full overflow-auto whitespace-pre-wrap p-4 font-mono text-sm leading-6 text-neutral-800">{text}</pre>
+        <div className="h-full overflow-auto bg-white">
+          <pre className="mx-auto max-w-4xl whitespace-pre-wrap px-6 py-8 font-mono text-sm leading-6 text-neutral-800">
+            {text}
+          </pre>
+        </div>
       ) : (
         <EmptyState
           icon={<FileText className="h-5 w-5" />}
