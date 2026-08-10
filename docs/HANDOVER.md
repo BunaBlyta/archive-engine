@@ -236,6 +236,9 @@ can.
   still blocking new ones
 
 **Frontend**
+- **`App.tsx` went from 2,855 lines to 406**, with 25 components extracted into
+  `features/{auth,documents,workspaces,review,tasks}` and `components/`. Every step was a move
+  plus imports, verified by typecheck and the e2e suite before the next.
 - **The session silently died after 15 minutes.** Tokens were only fetched at boot. Now a
   13-minute timer plus a single-flight 401 retry
 - An error boundary, so a render error no longer blanks the page
@@ -264,7 +267,11 @@ can.
 - The worker has no container image. It's the only piece that can't be deployed as-is
 
 **Quality, not bugs**
-- The editor bundle is 611 kB; `App.tsx` is 2,855 lines
+- The editor bundle is 611 kB (tiptap, loaded on demand)
+- `DocumentFocusView.tsx` is 720 lines. It holds three screens — versions, draft editing and
+  review — switched by a `mode` flag, and they share a right-hand column, so splitting it means
+  extracting that shared column first rather than lifting the three branches out. Attempted and
+  backed out: it is a restructure, not a move.
 
 ---
 
