@@ -85,6 +85,10 @@ import {
   searchStatusLabel,
   statusTone,
 } from "./lib/format";
+import { EmptyState } from "./components/EmptyState";
+import { Field } from "./components/Field";
+import { Pager } from "./components/Pager";
+import { SearchSnippet } from "./components/SearchSnippet";
 import { OnlyOfficeEditor } from "./components/OnlyOfficeEditor";
 
 type Notice = { title: string; description?: string };
@@ -105,25 +109,6 @@ const MarkdownWysiwygEditor = lazy(() => import("./components/MarkdownWysiwygEdi
 
 
 
-function SearchSnippet({ snippet }: { snippet: string }) {
-  const parts = snippet.split(SEARCH_HIGHLIGHT_START);
-
-  return (
-    <>
-      {parts.map((part, index) => {
-        if (index === 0) return <span key={index}>{part}</span>;
-
-        const [match, ...rest] = part.split(SEARCH_HIGHLIGHT_END);
-        return (
-          <span key={index}>
-            <mark className="rounded bg-accent-100 px-0.5 text-inherit">{match}</mark>
-            {rest.join(SEARCH_HIGHLIGHT_END)}
-          </span>
-        );
-      })}
-    </>
-  );
-}
 
 
 type WorkspaceNavState = {
@@ -2830,58 +2815,5 @@ function UploadDocumentDialog({
   );
 }
 
-function Pager({
-  pagination,
-  count,
-  onPage,
-}: {
-  pagination: Pagination | null;
-  count: number;
-  onPage: (offset: number) => void | Promise<void>;
-}) {
-  if (!pagination) return null;
 
-  return (
-    <div className="flex items-center justify-between border-t border-neutral-100 px-2 py-3 text-sm text-neutral-600">
-      <span>
-        {count === 0
-          ? "No results"
-          : `Showing ${pagination.offset + 1} to ${pagination.offset + count}`}
-      </span>
-      <div className="flex gap-1">
-        <Button variant="secondary" size="icon" disabled={pagination.offset === 0} onClick={() => onPage(Math.max(0, pagination.offset - pagination.limit))} aria-label="Previous page">
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
-        <Button variant="secondary" size="icon" disabled={pagination.nextOffset === null} onClick={() => pagination.nextOffset !== null && onPage(pagination.nextOffset)} aria-label="Next page">
-          <ChevronRight className="h-4 w-4" />
-        </Button>
-      </div>
-    </div>
-  );
-}
 
-// The label was previously not associated with its input at all — no htmlFor, no id — so screen
-// readers announced an unlabelled field and clicking the label did nothing. Generating the id
-// here keeps every call site unchanged.
-function Field({ label, children }: { label: string; children: React.ReactElement<{ id?: string }> }) {
-  const id = useId();
-
-  return (
-    <div className="space-y-2">
-      <Label htmlFor={id}>{label}</Label>
-      {cloneElement(children, { id })}
-    </div>
-  );
-}
-
-function EmptyState({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) {
-  return (
-    <div className="grid h-full min-h-[14rem] place-items-center p-8 text-center">
-      <div>
-        <div className="mx-auto grid h-10 w-10 place-items-center rounded-md bg-neutral-100 text-neutral-600">{icon}</div>
-        <h3 className="mt-3 text-base">{title}</h3>
-        <p className="mt-1 max-w-sm text-sm text-neutral-500">{text}</p>
-      </div>
-    </div>
-  );
-}
