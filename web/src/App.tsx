@@ -1954,12 +1954,17 @@ function DocumentFocusView({
                 (() => {
                   const latestRequest = [...detail.reviews].reverse().find((r) => r.state === "changes_requested");
                   return latestRequest ? (
-                    <div className="mb-5 shrink-0 rounded-md border border-red-200 bg-red-50 p-3">
-                      <p className="text-sm text-red-800">
-                        Changes requested by {latestRequest.reviewer ? displayName(latestRequest.reviewer) : "a reviewer"}
+                    // No card: a rule and some type. The reviewer's note is the only thing
+                    // here worth weight, so it reads as ink and everything else recedes.
+                    <div className="mb-4 shrink-0 border-l-2 border-flame-300 pl-3">
+                      <p className="text-xs text-flame-600">
+                        Changes requested by{" "}
+                        {latestRequest.reviewer ? displayName(latestRequest.reviewer) : "a reviewer"}
                       </p>
                       {latestRequest.body ? (
-                        <p className="mt-1 whitespace-pre-wrap text-sm text-red-700">{latestRequest.body}</p>
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink">
+                          {latestRequest.body}
+                        </p>
                       ) : null}
                     </div>
                   ) : null;
