@@ -103,22 +103,31 @@ function searchStatusLabel(status?: string | null) {
   return "not indexed";
 }
 
+// Every action the API writes has a label here. Four did not, so the audit log showed raw
+// strings like "proposed_change.revised" beside readable ones. The scheme is "<Thing> <verbed>",
+// and the verbs match the buttons that cause them — a log that calls something "discarded" when
+// the button said "Discard" is one you can actually follow. api/src/routes/auditActions.test.ts
+// fails if the two lists drift apart.
 const AUDIT_ACTION_LABELS: Record<string, string> = {
   "document.created": "Document created",
   "document.renamed": "Document renamed",
   "document.archived": "Document archived",
+  "document_version.downloaded": "Version downloaded",
+  "document_version.exported": "Version exported",
   "document_draft.created": "Draft created",
-  "document_version.downloaded": "Downloaded",
-  "document_version.exported": "Exported",
-  "document_task.created": "Task created",
-  "document_task.completed": "Task completed",
-  "membership.created": "Member added",
+  "document_draft.updated": "Draft edited",
+  "document_draft.docx_saved": "Draft saved",
+  "document_draft.discarded": "Draft discarded",
   "proposed_change.opened": "Change proposed",
   "proposed_change.commented": "Change commented",
   "proposed_change.reviewed": "Change reviewed",
+  "proposed_change.revised": "Change revised",
   "proposed_change.published": "Change published",
-  "proposed_change.abandoned": "Proposal discarded",
-  "proposed_change.withdrawn": "Proposal withdrawn to draft",
+  "proposed_change.withdrawn": "Change withdrawn to draft",
+  "proposed_change.abandoned": "Change discarded",
+  "document_task.created": "Task created",
+  "document_task.completed": "Task completed",
+  "membership.created": "Member added",
 };
 
 function auditActionLabel(action: string) {
