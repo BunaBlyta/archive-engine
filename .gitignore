@@ -1,5 +1,9 @@
 node_modules
 .env
+# Local curl cookie jars may contain development refresh tokens
+cookies1.txt
+cookies2.txt
+cookies*.txt
 dist
 .DS_Store
 data
