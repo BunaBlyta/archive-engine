@@ -72,5 +72,7 @@ export async function signIn(page: Page, email: string) {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(PASSWORD);
   await page.getByRole("button", { name: /sign in/i }).click();
-  await expect(page.getByRole("heading", { name: "Workspaces" })).toBeVisible();
+  // exact: Playwright matches accessible names by substring, so a bare "Workspaces" also matches
+  // the "No workspaces yet" empty state that renders before the list loads.
+  await expect(page.getByRole("heading", { name: "Workspaces", exact: true })).toBeVisible();
 }

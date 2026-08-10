@@ -1538,6 +1538,11 @@ function DocumentFocusView({
     doc.versions?.find((version) => version.id === selectedVersionId) ?? newestVersion;
   const openProposal = doc.openProposedChange;
   const activeDraft = doc.activeDraft ?? null;
+  // The API lets only the draft's author (or an admin) resume or discard it, so offering those
+  // actions to anyone else produces a button that always fails.
+  const canEditActiveDraft =
+    activeDraft !== null &&
+    (activeDraft.createdById === currentUserId || workspace.role === "admin");
   const hasVersions = (doc.versions?.length ?? 0) > 0;
   const hasTasks = tasks.length > 0;
   const canEditCurrentVersion = newestVersion ? isEditableTextMimeType(newestVersion.mimeType) : false;
@@ -1999,7 +2004,7 @@ function DocumentFocusView({
                         View changes
                       </Button>
                     ) : null}
-                    {activeDraft ? (
+                    {activeDraft && canEditActiveDraft ? (
                       <Button variant="secondary" onClick={() => void discardActiveDraft()} disabled={busy}>
                         {busy && busyLabel === "Discarding draft" ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -2011,13 +2016,15 @@ function DocumentFocusView({
                     ) : null}
                     <Button
                       onClick={() => void (activeDraft ? resumeDraft(activeDraft.id) : startDraft())}
-                      disabled={busy || (!activeDraft && !canPropose)}
+                      disabled={busy || (activeDraft ? !canEditActiveDraft : !canPropose)}
                       title={
-                        openProposal
-                          ? "A proposed change is already awaiting review"
-                          : newestVersion && !canEditCurrentVersion
-                            ? "This document format cannot be edited here"
-                            : undefined
+                        activeDraft && !canEditActiveDraft
+                          ? "Someone else is drafting a change to this document"
+                          : openProposal
+                            ? "A proposed change is already awaiting review"
+                            : newestVersion && !canEditCurrentVersion
+                              ? "This document format cannot be edited here"
+                              : undefined
                       }
                     >
                       {busy && (busyLabel === "Creating draft" || busyLabel === "Opening draft") ? (
@@ -2025,7 +2032,11 @@ function DocumentFocusView({
                       ) : (
                         <Pencil className="h-4 w-4" />
                       )}
-                      {activeDraft ? "Resume draft" : "Propose changes"}
+                      {activeDraft
+                        ? canEditActiveDraft
+                          ? "Resume draft"
+                          : "Draft in progress"
+                        : "Propose changes"}
                     </Button>
                     {selectedVersion ? (
                       <Button
@@ -2089,6 +2100,8 @@ function DocumentFocusView({
             tasks={tasks}
             loading={tasksLoading}
             onComplete={(taskId) => void completeTask(taskId)}
+            currentUserId={currentUserId}
+            isAdmin={workspace.role === "admin"}
             members={members}
             onAssignTask={createTask}
             className={cn("min-h-0", hasTasks ? "flex-1" : "shrink-0")}
@@ -2118,6 +2131,8 @@ function TasksPanel({
   tasks,
   loading,
   onComplete,
+  currentUserId,
+  isAdmin,
   members,
   onAssignTask,
   className,
@@ -2125,6 +2140,8 @@ function TasksPanel({
   tasks: DocumentTask[];
   loading: boolean;
   onComplete: (taskId: string) => void;
+  currentUserId: string | null;
+  isAdmin: boolean;
   members: WorkspaceMember[];
   onAssignTask: (title: string, assigneeId: string) => Promise<void>;
   className?: string;
@@ -2159,10 +2176,16 @@ function TasksPanel({
                     {task.createdBy ? ` · by ${displayName(task.createdBy)}` : ""}
                   </p>
                 </div>
-                <Button variant="secondary" size="sm" onClick={() => onComplete(task.id)}>
-                  <CheckSquare className="h-4 w-4" />
-                  Done
-                </Button>
+                {/* The API allows only the assignee, the task's creator, or an admin to complete
+                    it, so anyone else would get a 403 from this button. */}
+                {isAdmin ||
+                (currentUserId &&
+                  (task.assignee?.id === currentUserId || task.createdBy?.id === currentUserId)) ? (
+                  <Button variant="secondary" size="sm" onClick={() => onComplete(task.id)}>
+                    <CheckSquare className="h-4 w-4" />
+                    Done
+                  </Button>
+                ) : null}
               </div>
             ))}
           </div>
