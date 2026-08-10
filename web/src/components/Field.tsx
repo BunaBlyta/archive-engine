@@ -1,5 +1,6 @@
-import { cloneElement, useId } from "react";
 import { Label } from "./ui/label";
+import { cloneElement, useId } from "react";
+import type { ReactElement } from "react";
 
 // The label was previously not associated with its input at all — no htmlFor, no id — so screen
 // readers announced an unlabelled field and clicking the label did nothing. Generating the id

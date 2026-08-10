@@ -85,10 +85,20 @@ import {
   searchStatusLabel,
   statusTone,
 } from "./lib/format";
+import type { Notice } from "./lib/types";
 import { EmptyState } from "./components/EmptyState";
 import { Field } from "./components/Field";
 import { Pager } from "./components/Pager";
 import { SearchSnippet } from "./components/SearchSnippet";
+import { AppHeader } from "./components/AppHeader";
+import { AuthScreen } from "./features/auth/AuthScreen";
+import { VersionRow } from "./features/documents/VersionRow";
+import { DocumentTable } from "./features/documents/DocumentTable";
+import { SearchResultList } from "./features/documents/SearchResultList";
+import { VersionPreviewContent } from "./features/documents/VersionPreviewContent";
+import { ActivityLogPage } from "./features/workspaces/ActivityLogPage";
+import { DashboardPanel } from "./features/workspaces/DashboardPanel";
+import { TasksPanel } from "./features/tasks/TasksPanel";
 import { AddMemberDialog } from "./features/workspaces/AddMemberDialog";
 import { UploadDocumentDialog } from "./features/documents/UploadDocumentDialog";
 import { RenameDocumentDialog } from "./features/documents/RenameDocumentDialog";
@@ -97,7 +107,6 @@ import { AssignTaskDialog } from "./features/tasks/AssignTaskDialog";
 import { RequestChangesDialog } from "./features/review/RequestChangesDialog";
 import { OnlyOfficeEditor } from "./components/OnlyOfficeEditor";
 
-type Notice = { title: string; description?: string };
 
 
 
@@ -367,50 +376,6 @@ export function App() {
   );
 }
 
-function AppHeader({
-  user,
-  onLogout,
-  middleRef,
-}: {
-  user: UserRef | null;
-  onLogout: () => void;
-  middleRef?: (el: HTMLDivElement | null) => void;
-}) {
-  return (
-    <header className="relative z-10 flex h-12 shrink-0 items-center gap-3 bg-surface px-4 shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
-      <div className="flex shrink-0 items-center gap-2">
-        <img src={logoIcon} alt="" className="h-7 w-7" />
-        <span className="hidden font-display text-[15px] font-medium lg:block">Archive Engine</span>
-      </div>
-      <div ref={middleRef} className="flex min-w-0 flex-1 items-center gap-3" />
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            className="rounded-full outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500"
-            aria-label="Account menu"
-          >
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent-300 to-accent-500 text-xs font-semibold text-white">
-              {initials(user)}
-            </span>
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {user ? (
-            <div className="px-2 py-1.5">
-              <div className="truncate text-sm font-medium">{displayName(user)}</div>
-              <div className="truncate text-xs text-neutral-500">{user.email}</div>
-            </div>
-          ) : null}
-          <DropdownMenuItem onSelect={onLogout}>
-            <LogOut className="h-4 w-4" />
-            Sign out
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </header>
-  );
-}
 
 function WorkspacesLanding({
   workspaces,
@@ -497,77 +462,6 @@ function WorkspacesLanding({
   );
 }
 
-function AuthScreen({
-  onAuthed,
-  onError,
-}: {
-  onAuthed: (token: string, user: UserRef) => Promise<void>;
-  onError: (message: string) => void;
-}) {
-  const [mode, setMode] = useState("login");
-  const [email, setEmail] = useState("test@example.com");
-  const [password, setPassword] = useState("password123");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    try {
-      const data = mode === "login"
-        ? await api.login(email, password)
-        : await api.register(email, password, firstName, lastName);
-      await onAuthed(data.accessToken, data.user);
-    } catch (error) {
-      onError(errorMessage(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <section className="grid min-h-screen place-items-center px-4">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-lg border border-neutral-100 bg-white p-6">
-        <div className="mb-6 flex items-center gap-3">
-          <img src={logoIcon} alt="" className="h-10 w-10" />
-          <div>
-            <h1 className="text-lg">Archive Engine</h1>
-            <p className="text-sm text-neutral-500">Sign in to manage document versions.</p>
-          </div>
-        </div>
-        <Tabs value={mode} onValueChange={setMode} className="mb-5">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="login">Login</TabsTrigger>
-            <TabsTrigger value="register">Register</TabsTrigger>
-          </TabsList>
-        </Tabs>
-        <div className="space-y-4">
-          {mode === "register" ? (
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="First name">
-                <Input value={firstName} onChange={(event) => setFirstName(event.target.value)} autoComplete="given-name" required />
-              </Field>
-              <Field label="Last name">
-                <Input value={lastName} onChange={(event) => setLastName(event.target.value)} autoComplete="family-name" required />
-              </Field>
-            </div>
-          ) : null}
-          <Field label="Email">
-            <Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" required />
-          </Field>
-          <Field label="Password">
-            <Input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} required />
-          </Field>
-          <Button className="w-full" disabled={busy}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
-            {mode === "login" ? "Sign in" : "Create account"}
-          </Button>
-        </div>
-      </form>
-    </section>
-  );
-}
 
 function WorkspaceView({
   token,
@@ -834,179 +728,7 @@ function WorkspaceView({
   );
 }
 
-function DashboardPanel({
-  token,
-  workspace,
-  onError,
-  onNotice,
-  onOpenActivityLog,
-}: {
-  token: string;
-  workspace: Workspace;
-  onError: (message: string) => void;
-  onNotice: (notice: Notice) => void;
-  onOpenActivityLog: () => void;
-}) {
-  const [members, setMembers] = useState<WorkspaceDashboardMember[]>([]);
-  const [loading, setLoading] = useState(false);
 
-  async function load() {
-    setLoading(true);
-    try {
-      const dashData = await api.getDashboard(token, workspace.id);
-      setMembers(dashData.members);
-    } catch (error) {
-      onError(errorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void load();
-  }, [workspace.id]);
-
-  return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      <section className="flex min-h-0 flex-1 flex-col rounded-2xl bg-white p-3">
-        <div className="shrink-0 pb-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <Users className="h-4 w-4 shrink-0 text-neutral-400" />
-              <h3 className="text-base">Members</h3>
-              {workspace.role === "admin" ? (
-                <div className="-ml-2">
-                  <AddMemberDialog
-                    token={token}
-                    workspace={workspace}
-                    onAdded={async () => {
-                      await load();
-                      onNotice({ title: "Member added" });
-                    }}
-                    onError={onError}
-                  />
-                </div>
-              ) : null}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onOpenActivityLog}
-                className="flex items-center gap-1.5 text-[11px] text-accent-400 hover:text-accent-600"
-              >
-                <Activity className="h-3 w-3 shrink-0" />
-                Recent activity
-              </button>
-              {loading ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-neutral-400" /> : null}
-            </div>
-          </div>
-          <p className="mt-3 text-sm text-neutral-500">{members.length} with access</p>
-        </div>
-        {members.length === 0 ? (
-          <EmptyState icon={<Users className="h-5 w-5" />} title="No members found" text="Workspace members will appear here." />
-        ) : (
-          <div className="min-h-0 flex-1 divide-y divide-neutral-200 overflow-y-auto">
-            {members.map((member) => (
-              <div key={member.userId} className="flex items-center gap-3 px-1 py-3.5 text-sm">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent-300 to-accent-500 text-xs text-white">
-                  {initials(member)}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate text-sm">{displayName(member)}</span>
-                    {member.role === "admin" ? <Shield className="h-3 w-3 shrink-0 text-accent-400" aria-label="Admin" /> : null}
-                  </div>
-                  <div className="text-xs text-neutral-400">{member.contributionCount} contributions</div>
-                </div>
-                <div className="shrink-0 text-xs text-neutral-400">{formatRelativeDate(member.createdAt)}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function ActivityLogPage({
-  token,
-  workspace,
-  onError,
-}: {
-  token: string;
-  workspace: Workspace;
-  onError: (message: string) => void;
-}) {
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
-  const [auditPagination, setAuditPagination] = useState<Pagination | null>(null);
-  const [auditOffset, setAuditOffset] = useState(0);
-  const [loading, setLoading] = useState(false);
-
-  async function loadAuditPage(nextOffset: number) {
-    setLoading(true);
-    try {
-      const data = await api.listAuditLogs(token, workspace.id, nextOffset, PAGE_SIZE);
-      setAuditLogs(data.auditLogs);
-      setAuditPagination(data.pagination);
-      setAuditOffset(nextOffset);
-    } catch (error) {
-      onError(errorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadAuditPage(0);
-  }, [workspace.id]);
-
-  return (
-    <div className="flex h-full min-h-0 flex-col rounded-2xl bg-white p-3">
-      <div className="shrink-0 pb-3">
-        <div className="flex items-center gap-2.5">
-          <Activity className="h-4 w-4 shrink-0 text-neutral-400" />
-          <h3 className="text-base">Activity log</h3>
-        </div>
-        <p className="mt-2 text-sm text-neutral-500">Full audit log for this workspace.</p>
-      </div>
-      {!loading && auditLogs.length === 0 ? (
-        <EmptyState icon={<Activity className="h-5 w-5" />} title="No audit events" text="Events appear as files and members change." />
-      ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto px-1 pt-2">
-          {auditLogs.map((log, index) => (
-            <div key={log.id} className="flex gap-3.5">
-              <div className="flex w-2 shrink-0 flex-col items-center">
-                <span className="mt-2 h-2.5 w-2.5 shrink-0 rounded-full bg-flame-400 ring-4 ring-flame-100" />
-                {index < auditLogs.length - 1 ? <span className="w-0 flex-1 border-l border-dashed border-flame-300" /> : null}
-              </div>
-              <div className={cn("flex min-w-0 flex-1 items-start justify-between gap-3 text-sm", index < auditLogs.length - 1 ? "pb-6" : "")}>
-                <div className="min-w-0">
-                  <div className="truncate">
-                    {auditActionLabel(log.action)}
-                    {log.document ? (
-                      <span className="text-neutral-400"> · {log.document.title}</span>
-                    ) : null}
-                  </div>
-                  <div className="truncate text-xs text-neutral-400">
-                    {log.actorEmail
-                      ? displayName({ email: log.actorEmail, firstName: log.actorFirstName, lastName: log.actorLastName })
-                      : log.actorId ?? "System"}
-                  </div>
-                </div>
-                <span className="shrink-0 text-xs text-neutral-400">{formatRelativeDate(log.createdAt)}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {auditPagination ? (
-        <div className="-mx-3 -mb-3 mt-3 shrink-0 rounded-b-2xl border-t border-neutral-100 bg-white px-2">
-          <Pager pagination={{ ...auditPagination, offset: auditOffset }} count={auditLogs.length} onPage={loadAuditPage} />
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 
 function DocumentsListPanel({
@@ -1102,104 +824,7 @@ function DocumentsListPanel({
   );
 }
 
-function SearchResultList({
-  results,
-  busy,
-  onSelect,
-  onFocus,
-  selectedDocumentId,
-  compact,
-}: {
-  results: SearchResult[];
-  busy: boolean;
-  onSelect: (id: string) => void;
-  onFocus: (id: string) => void;
-  selectedDocumentId: string | null;
-  compact?: boolean;
-}) {
-  if (!busy && results.length === 0) {
-    return <EmptyState icon={<Search className="h-5 w-5" />} title="No search results" text="Try a different query, or check that the document has been indexed." />;
-  }
 
-  return (
-    <div className="flex flex-col gap-2">
-      {results.map((result) => (
-        <div
-          key={`${result.document.id}-${result.version.id}`}
-          onClick={() => onSelect(result.document.id)}
-          onDoubleClick={() => onFocus(result.document.id)}
-          className={cn(
-            "flex cursor-pointer rounded-lg border border-neutral-200 bg-neutral-50 transition-all hover:-translate-y-0.5 hover:border-neutral-300",
-            compact ? "flex-col gap-1 p-2.5" : "items-start justify-between gap-3 p-3.5",
-            selectedDocumentId === result.document.id && "bg-accent-50 hover:bg-accent-50"
-          )}
-        >
-          <div className="min-w-0">
-            <h4 className="truncate text-sm">{result.document.title}</h4>
-            <p className={cn("mt-1 text-sm text-neutral-500", compact ? "line-clamp-1" : "line-clamp-2")}>
-              {result.search.snippet ? (
-                <SearchSnippet snippet={result.search.snippet} />
-              ) : (
-                "Matched indexed content"
-              )}
-            </p>
-            <p className="mt-1 truncate text-xs text-neutral-400">{result.version.originalFilename ?? result.version.mimeType} · v{result.version.version}</p>
-          </div>
-          <span className="shrink-0 text-xs text-neutral-400">{formatRelativeDate(result.search.indexedAt)}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function DocumentTable({
-  documents,
-  busy,
-  onSelect,
-  onFocus,
-  selectedDocumentId,
-  compact,
-}: {
-  documents: ArchiveDocument[];
-  busy: boolean;
-  onSelect: (id: string) => void;
-  onFocus: (id: string) => void;
-  selectedDocumentId: string | null;
-  compact?: boolean;
-}) {
-  if (!busy && documents.length === 0) {
-    return <EmptyState icon={<FilePlus2 className="h-5 w-5" />} title="No documents yet" text="Upload the first file for this workspace." />;
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      {documents.map((document) => {
-        const version = latestVersion(document);
-        return (
-          <div
-            key={document.id}
-            onClick={() => onSelect(document.id)}
-            onDoubleClick={() => onFocus(document.id)}
-            className={cn(
-              "flex cursor-pointer rounded-lg border border-neutral-200 bg-neutral-50 transition-all hover:-translate-y-0.5 hover:border-neutral-300",
-              compact ? "flex-col gap-0.5 p-2.5" : "items-center justify-between gap-3 p-3.5",
-              selectedDocumentId === document.id && "bg-accent-50 hover:bg-accent-50"
-            )}
-            title="Click to preview, double-click to open"
-          >
-            <div className="min-w-0">
-              <h4 className="truncate text-sm">{document.title}</h4>
-              <p className="mt-1 truncate text-xs text-neutral-400">
-                {version ? `v${version.version} · ${formatBytes(version.sizeBytes)}` : "No versions"}
-              </p>
-            </div>
-            <span className={cn("shrink-0 text-xs text-neutral-400", compact && "mt-1")}>{formatRelativeDate(document.createdAt)}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 function DocumentQuickPreview({
   token,
@@ -1979,93 +1604,6 @@ function DocumentFocusView({
   );
 }
 
-function TasksPanel({
-  tasks,
-  loading,
-  onComplete,
-  currentUserId,
-  isAdmin,
-  members,
-  onAssignTask,
-  className,
-}: {
-  tasks: DocumentTask[];
-  loading: boolean;
-  onComplete: (taskId: string) => void;
-  currentUserId: string | null;
-  isAdmin: boolean;
-  members: WorkspaceMember[];
-  onAssignTask: (title: string, assigneeId: string) => Promise<void>;
-  className?: string;
-}) {
-  const openTasks = tasks.filter((t) => t.status === "open");
-  const doneTasks = tasks.filter((t) => t.status === "done");
-
-  return (
-    <div className={cn("flex min-h-0 flex-col rounded-2xl bg-white p-3", className)}>
-      <div className="shrink-0 pb-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <CheckSquare className="h-4 w-4 shrink-0 text-neutral-400" />
-            <h4 className="text-base">Tasks</h4>
-          </div>
-          <div className="mr-2 flex items-center gap-2">
-            {loading ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-neutral-400" /> : null}
-            <AssignTaskDialog members={members} onCreate={onAssignTask} />
-          </div>
-        </div>
-        <p className="mt-2 text-sm text-neutral-500">Freeform assignments for this document.</p>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {openTasks.length > 0 ? (
-          <div className="divide-y divide-neutral-200">
-            {openTasks.map((task) => (
-              <div key={task.id} className="flex items-start justify-between gap-3 px-1 py-3.5">
-                <div className="min-w-0">
-                  <p className="text-sm">{task.title}</p>
-                  <p className="mt-0.5 text-xs text-neutral-400">
-                    Assigned to {task.assignee ? displayName(task.assignee) : "—"}
-                    {task.createdBy ? ` · by ${displayName(task.createdBy)}` : ""}
-                  </p>
-                </div>
-                {/* The API allows only the assignee, the task's creator, or an admin to complete
-                    it, so anyone else would get a 403 from this button. */}
-                {isAdmin ||
-                (currentUserId &&
-                  (task.assignee?.id === currentUserId || task.createdBy?.id === currentUserId)) ? (
-                  <Button variant="secondary" size="sm" onClick={() => onComplete(task.id)}>
-                    <CheckSquare className="h-4 w-4" />
-                    Done
-                  </Button>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="px-1 text-sm text-neutral-500">No open tasks.</div>
-        )}
-        {doneTasks.length > 0 ? (
-          <div className="mt-3">
-            <div className="px-1 pb-2 text-xs uppercase tracking-wide text-neutral-400">Completed</div>
-            <div className="divide-y divide-neutral-200">
-              {doneTasks.map((task) => (
-                <div key={task.id} className="flex items-start gap-3 px-1 py-3.5 opacity-60">
-                  <CheckSquare className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
-                  <div className="min-w-0">
-                    <p className="text-sm line-through">{task.title}</p>
-                    <p className="mt-0.5 text-xs text-neutral-400">
-                      Assigned to {task.assignee ? displayName(task.assignee) : "—"}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 
 
@@ -2314,115 +1852,7 @@ function DiffLineWithComments({
 }
 
 
-function VersionRow({
-  version,
-  onSelect,
-}: {
-  version: DocumentVersion;
-  onSelect: () => void;
-}) {
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(event) => {
-        if (event.target !== event.currentTarget) return;
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelect();
-        }
-      }}
-      className="cursor-pointer px-1 py-3.5 text-left transition-colors hover:bg-neutral-100/60"
-    >
-      <div className="min-w-0">
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm">Version {version.version}</span>
-          {version.search && (version.search.status === "pending" || version.search.status === "failed") ? (
-            <Badge tone={statusTone(version.search.status)}>{searchStatusLabel(version.search.status)}</Badge>
-          ) : null}
-        </div>
-        <div className="mt-1 text-xs text-neutral-400">
-          {displayName(version.createdBy)} · {formatRelativeDate(version.createdAt)}
-        </div>
-      </div>
-    </div>
-  );
-}
 
-function VersionPreviewContent({
-  token,
-  workspace,
-  document,
-  version,
-  onError,
-  className,
-}: {
-  token: string;
-  workspace: Workspace;
-  document: ArchiveDocument;
-  version: DocumentVersion;
-  onError: (message: string) => void;
-  className?: string;
-}) {
-  const [busy, setBusy] = useState(true);
-  const [text, setText] = useState<string | null>(null);
-  const kind = previewKind(version.mimeType);
-
-  useEffect(() => {
-    let cancelled = false;
-    setBusy(true);
-    setText(null);
-
-    async function loadPreview() {
-      try {
-        const file = await api.previewVersion(token, workspace.id, document.id, version.version);
-        if (cancelled) return;
-        if (kind === "text" || kind === "html") {
-          setText(await file.blob.text());
-        }
-      } catch (error) {
-        if (!cancelled) onError(errorMessage(error));
-      } finally {
-        if (!cancelled) setBusy(false);
-      }
-    }
-
-    void loadPreview();
-    return () => {
-      cancelled = true;
-    };
-  }, [token, workspace.id, document.id, version.id, version.version, kind]);
-
-  return (
-    <div className={cn("h-full w-full", className)}>
-      {busy ? (
-        <div className="grid h-full place-items-center text-sm text-neutral-500">
-          <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Loading preview</span>
-        </div>
-      ) : kind === "html" && text !== null ? (
-        <iframe
-          title={`${document.title} version ${version.version}`}
-          srcDoc={text}
-          sandbox=""
-          className="h-full w-full border-0 bg-neutral-100"
-        />
-      ) : kind === "text" && text !== null ? (
-        <div className="h-full overflow-auto bg-white">
-          <pre className="mx-auto max-w-4xl whitespace-pre-wrap px-6 py-8 font-mono text-sm leading-6 text-neutral-800">
-            {text}
-          </pre>
-        </div>
-      ) : (
-        <EmptyState
-          icon={<FileText className="h-5 w-5" />}
-          title="Preview unavailable"
-          text="This file type cannot be displayed in the browser."
-        />
-      )}
-    </div>
-  );
-}
 
 
 
